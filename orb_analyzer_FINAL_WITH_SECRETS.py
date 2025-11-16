@@ -28,6 +28,28 @@ CHECK_INTERVAL = 300  # 5 minutes
 MAX_ITERATIONS = 1  # Stop after 1 check
 
 # ════════════════════════════════════════════════════════════════════════════════════
+# CREATE LOG DIRECTORY AND INITIALIZE CSV
+# ════════════════════════════════════════════════════════════════════════════════════
+
+def create_log_dir():
+    """Create logs directory if it doesn't exist"""
+    if not os.path.exists(LOG_DIR):
+        os.makedirs(LOG_DIR)
+        print(f"✅ Created log directory: {LOG_DIR}")
+
+
+def initialize_csv():
+    """Create empty CSV file if it doesn't exist"""
+    if not os.path.isfile(LOG_FILE):
+        # Create header row
+        df = pd.DataFrame(columns=[
+            'Time', 'Pair', 'Direction', 'Score', 'Recommendation', 
+            'SL', 'TP1', 'TP2', 'TP3', 'Factors'
+        ])
+        df.to_csv(LOG_FILE, index=False)
+        print(f"✅ Created CSV file: {LOG_FILE}")
+        
+# ════════════════════════════════════════════════════════════════════════════════════
 # HELPER FUNCTIONS
 # ════════════════════════════════════════════════════════════════════════════════════
 
@@ -369,6 +391,9 @@ def analyze_pair(df, pair_name):
 # ════════════════════════════════════════════════════════════════════════════════════
 
 def main():
+    # CREATE LOG DIR AND CSV FIRST
+    create_log_dir()
+    initialize_csv()
     print("🚀 ORB Analyzer - Complete (ALL 8 FACTORS)")
     print(f"📊 Pairs: {', '.join(PAIRS)}")
     print(f"⏱️  Check every {CHECK_INTERVAL}s")
