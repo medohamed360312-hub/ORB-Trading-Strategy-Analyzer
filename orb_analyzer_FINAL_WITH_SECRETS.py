@@ -18,7 +18,7 @@ import os
 # ════════════════════════════════════════════════════════════════════════════════════
 
 # Read API key from GitHub Secrets environment variable
-API_KEY = os.getenv('TWELVEDATA_API_KEY')
+API_KEY = os.getenv('TWELVEDATA_API_KEY', 'ALPHA')
 BASE_URL = "https://api.twelvedata.com"
 
 PAIRS = ["EUR/USD", "GBP/USD", "USD/JPY", "USD/CAD", "EUR/GBP", "XAU/USD"]
@@ -52,7 +52,8 @@ def initialize_csv():
         ])
         df.to_csv(LOG_FILE, index=False)
         print(f"✅ Created CSV file: {LOG_FILE}")
-        
+
+
 # ════════════════════════════════════════════════════════════════════════════════════
 # HELPER FUNCTIONS
 # ════════════════════════════════════════════════════════════════════════════════════
@@ -249,6 +250,42 @@ def check_support_resistance(closes, highs, lows, period=10):
         return False
 
 
+def log_result(pair, direction, score, recommendation, factors_str, sl, tp1, tp2, tp3):
+    """Log trade result to CSV file"""
+    try:
+        timestamp = datetime.now().strftime("%H:%M:%S")
+
+        log_entry = {
+            'Time': timestamp,
+            'Pair': pair,
+            'Direction': direction,
+            'Score': score,
+            'Recommendation': recommendation,
+            'SL': f"{sl:.5f}",
+            'TP1': f"{tp1:.5f}",
+            'TP2': f"{tp2:.5f}",
+            'TP3': f"{tp3:.5f}",
+            'Factors': factors_str
+        }
+
+        # Read existing CSV
+        df = pd.read_csv(LOG_FILE)
+
+        # Add new row
+        new_row = pd.DataFrame([log_entry])
+        df = pd.concat([df, new_row], ignore_index=True)
+
+        # Save back
+        df.to_csv(LOG_FILE, index=False)
+
+        print(f"   📝 Logged: {pair} {direction} Score:{score}")
+        return True
+
+    except Exception as e:
+        print(f"   ⚠️  Logging error: {str(e)[:40]}")
+        return False
+
+
 # ════════════════════════════════════════════════════════════════════════════════════
 # ANALYSIS - ALL 8 FACTORS
 # ════════════════════════════════════════════════════════════════════════════════════
@@ -398,12 +435,14 @@ def main():
     # CREATE LOG DIR AND CSV FIRST
     create_log_dir()
     initialize_csv()
+
     print("🚀 ORB Analyzer - Complete (ALL 8 FACTORS)")
     print(f"📊 Pairs: {', '.join(PAIRS)}")
     print(f"⏱️  Check every {CHECK_INTERVAL}s")
     print(f"🔢 Runs: {MAX_ITERATIONS} times then stop")
     print(f"✅ Scoring: 0-8 points")
     print(f"🔐 API Key: From GitHub Secrets (Secure)")
+    print(f"📝 Logging to: {LOG_FILE}")
 
     iteration = 0
 
@@ -443,6 +482,20 @@ def main():
                     for k in sorted(result['factors'].keys()):
                         print(f"   {result['factors'][k]}")
 
+                # LOG THE TRADE
+                factors_str = " | ".join([f"{k}:{v}" for k, v in sorted(result['factors'].items())])
+                log_result(
+                    result['pair'],
+                    result['direction'],
+                    result['score'],
+                    result['recommendation'],
+                    factors_str,
+                    result['sl'],
+                    result['tp1'],
+                    result['tp2'],
+                    result['tp3']
+                )
+
             time.sleep(1)
 
         print(f"\n{'='*80}")
@@ -456,6 +509,8 @@ def main():
         else:
             print(f"✅ Completed {MAX_ITERATIONS} checks. Stopping.")
             break
+
+    print(f"✅ CSV file saved: {LOG_FILE}")
 
 
 if __name__ == "__main__":
