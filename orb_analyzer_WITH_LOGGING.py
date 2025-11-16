@@ -17,7 +17,7 @@ import csv
 # CONFIGURATION
 # ════════════════════════════════════════════════════════════════════════════════════
 
-API_KEY = "ALPHA"
+API_KEY = "4ebb09d64b1c4c50aabd238ef4c2be44"
 BASE_URL = "https://api.twelvedata.com"
 
 PAIRS = ["EUR/USD", "GBP/USD", "USD/JPY"]  # Top 3 pairs only
