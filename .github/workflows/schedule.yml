@@ -19,24 +19,25 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
+      
       - uses: actions/setup-python@v4
         with:
           python-version: '3.10'
+      
       - run: pip install -r requirements.txt
       
-      # IMPORTANT: Add this section to pass API key from GitHub Secrets
+      - run: mkdir -p trading_logs
+      
       - run: python orb_analyzer_FINAL_WITH_SECRETS.py
         env:
           TWELVEDATA_API_KEY: ${{ secrets.TWELVEDATA_API_KEY }}
       
-      # Upload as artifact
       - uses: actions/upload-artifact@v4
         with:
           name: trading_logs
           path: trading_logs/
           retention-days: 30
       
-      # COMMIT LOGS TO REPOSITORY
       - name: Commit logs to repository
         run: |
           git config --local user.email "action@github.com"
