@@ -35,7 +35,7 @@ jobs:
           python-version: '3.10'
       - run: pip install -r requirements.txt
       - run: python orb_analyzer_WITH_LOGGING.py
-      - uses: actions/upload-artifact@v3
+      - uses: actions/upload-artifact@v4
         with:
           name: trading_logs
           path: trading_logs/
