@@ -28,7 +28,7 @@ jobs:
       
       - run: mkdir -p trading_logs
       
-      - run: python orb_analyzer_FINAL_WITH_SECRETS.py
+      - run: python orb_analyzer_FINAL_FIXED.py
         env:
           TWELVEDATA_API_KEY: ${{ secrets.TWELVEDATA_API_KEY }}
       
