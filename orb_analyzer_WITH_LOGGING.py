@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """
-FOREX ORB STRATEGY - WITH LOGGING & SCHEDULING
-Logs all results to CSV (one column per day)
-Can be scheduled on free server
+FOREX ORB STRATEGY - COMPLETE VERSION WITH ALL 8 CONFLUENCE FACTORS
+TwelveData - Real-time data
+All 8 factors: Breakout, RSI, MACD, EMA, Momentum, Volume, FVG, Support/Resistance
+API Key from GitHub Secrets (Secure)
 """
 
 import requests
@@ -11,129 +12,27 @@ import numpy as np
 from datetime import datetime
 import time
 import os
-import csv
 
 # ════════════════════════════════════════════════════════════════════════════════════
 # CONFIGURATION
 # ════════════════════════════════════════════════════════════════════════════════════
 
-API_KEY = "4ebb09d64b1c4c50aabd238ef4c2be44"
+# Read API key from GitHub Secrets environment variable
+API_KEY = os.getenv('TWELVEDATA_API_KEY')
 BASE_URL = "https://api.twelvedata.com"
 
-PAIRS = ["EUR/USD", "GBP/USD", "USD/JPY"]  # Top 3 pairs only
+PAIRS = ["EUR/USD", "GBP/USD", "USD/JPY", "USD/CAD", "EUR/GBP", "XAU/USD"]
 
 TIMEFRAME = "5min"
-MAX_ITERATIONS = 1  # Run once per execution
-
-# Log file configuration
-LOG_DIR = "trading_logs"
-LOG_FILE = f"{LOG_DIR}/orb_trading_log.csv"
+CHECK_INTERVAL = 300  # 5 minutes
+MAX_ITERATIONS = 1  # Stop after 1 check
 
 # ════════════════════════════════════════════════════════════════════════════════════
-# LOGGING FUNCTIONS
-# ════════════════════════════════════════════════════════════════════════════════════
-
-def create_log_dir():
-    """Create logs directory if it doesn't exist"""
-    if not os.path.exists(LOG_DIR):
-        os.makedirs(LOG_DIR)
-        print(f"✅ Created log directory: {LOG_DIR}")
-
-
-def get_today_column():
-    """Get today's date as column name (e.g., '2025-11-16')"""
-    return datetime.now().strftime("%Y-%m-%d")
-
-
-def log_result(pair, direction, score, recommendation, factors_str, sl, tp1, tp2, tp3):
-    """Log trade result to CSV file"""
-    try:
-        create_log_dir()
-
-        today = get_today_column()
-        timestamp = datetime.now().strftime("%H:%M:%S")
-
-        # Prepare log entry
-        log_entry = {
-            'Time': timestamp,
-            'Pair': pair,
-            'Direction': direction,
-            'Score': score,
-            'Recommendation': recommendation,
-            'SL': f"{sl:.5f}",
-            'TP1': f"{tp1:.5f}",
-            'TP2': f"{tp2:.5f}",
-            'TP3': f"{tp3:.5f}",
-            'Factors': factors_str
-        }
-
-        # Check if file exists
-        file_exists = os.path.isfile(LOG_FILE)
-
-        # Read existing data or create new
-        if file_exists:
-            df = pd.read_csv(LOG_FILE)
-        else:
-            df = pd.DataFrame()
-
-        # Add new row
-        new_row = pd.DataFrame([log_entry])
-        df = pd.concat([df, new_row], ignore_index=True)
-
-        # Save to CSV
-        df.to_csv(LOG_FILE, index=False)
-
-        print(f"   📝 Logged to: {LOG_FILE}")
-        return True
-
-    except Exception as e:
-        print(f"   ⚠️  Logging error: {str(e)[:40]}")
-        return False
-
-
-def print_log_summary():
-    """Print summary of today's trades"""
-    try:
-        if not os.path.isfile(LOG_FILE):
-            print("\n📊 No trades logged today yet")
-            return
-
-        df = pd.read_csv(LOG_FILE)
-        today = get_today_column()
-
-        # Filter today's trades
-        today_trades = df[df['Time'].str.contains(today, na=False)]
-
-        if len(today_trades) == 0:
-            print("\n📊 No trades logged today")
-            return
-
-        print(f"\n{'='*80}")
-        print(f"📊 TODAY'S TRADING LOG ({today})")
-        print(f"{'='*80}")
-        print(f"Total checks: {len(today_trades)}")
-
-        # Count by recommendation
-        trades = len(today_trades[today_trades['Recommendation'] == 'TRADE'])
-        skips = len(today_trades[today_trades['Recommendation'] == 'SKIP'])
-
-        print(f"TRADE signals: {trades}")
-        print(f"SKIP signals: {skips}")
-
-        print(f"\n{'Pair':<12} {'Dir':<8} {'Score':<8} {'Rec':<10}")
-        print("-" * 40)
-        for _, row in today_trades.iterrows():
-            print(f"{row['Pair']:<12} {row['Direction']:<8} {row['Score']:<8} {row['Recommendation']:<10}")
-
-    except Exception as e:
-        print(f"Error reading log: {str(e)[:40]}")
-
-
-# ════════════════════════════════════════════════════════════════════════════════════
-# HELPER FUNCTIONS (same as before)
+# HELPER FUNCTIONS
 # ════════════════════════════════════════════════════════════════════════════════════
 
 def safe_float(value):
+    """Safely convert to float"""
     try:
         return float(value)
     except:
@@ -141,8 +40,10 @@ def safe_float(value):
 
 
 def get_twelvedata_candles(pair, api_key, interval="5min", count=50):
+    """Get candles from TwelveData"""
     try:
         url = f"{BASE_URL}/time_series"
+
         params = {
             "symbol": pair,
             "interval": interval,
@@ -160,9 +61,10 @@ def get_twelvedata_candles(pair, api_key, interval="5min", count=50):
 
         data = response.json()
 
-        if "status" in data and data["status"] == "error":
-            print(f" ❌ {data.get('message', 'Error')[:40]}")
-            return None
+        if "status" in data:
+            if data["status"] == "error":
+                print(f" ❌ {data.get('message', 'Error')[:40]}")
+                return None
 
         if "values" not in data:
             print(f" ❌ No values")
@@ -178,6 +80,7 @@ def get_twelvedata_candles(pair, api_key, interval="5min", count=50):
         for candle in candles:
             try:
                 records.append({
+                    'time': candle.get('datetime'),
                     'open': safe_float(candle.get('open')),
                     'high': safe_float(candle.get('high')),
                     'low': safe_float(candle.get('low')),
@@ -202,21 +105,26 @@ def get_twelvedata_candles(pair, api_key, interval="5min", count=50):
 
 
 # ════════════════════════════════════════════════════════════════════════════════════
-# INDICATOR CALCULATIONS (abbreviated)
+# INDICATOR CALCULATIONS
 # ════════════════════════════════════════════════════════════════════════════════════
 
 def calculate_rsi(close_prices, period=14):
+    """Calculate RSI - FACTOR 2"""
     try:
         if len(close_prices) < period:
             return None
+
         close = np.array([safe_float(x) for x in close_prices])
         delta = np.diff(close)
         gain = np.where(delta > 0, delta, 0)
         loss = np.where(delta < 0, -delta, 0)
+
         avg_gain = np.mean(gain[-period:])
         avg_loss = np.mean(loss[-period:])
+
         if avg_loss == 0:
             return 100 if avg_gain > 0 else 0
+
         rs = avg_gain / avg_loss
         rsi = 100 - (100 / (1 + rs))
         return float(rsi)
@@ -225,25 +133,32 @@ def calculate_rsi(close_prices, period=14):
 
 
 def calculate_macd(close_prices, fast=12, slow=26, signal=9):
+    """Calculate MACD - FACTOR 3"""
     try:
         if len(close_prices) < slow:
             return None, None, None
+
         close = np.array([safe_float(x) for x in close_prices])
         series = pd.Series(close)
+
         ema_fast = series.ewm(span=fast, adjust=False).mean()
         ema_slow = series.ewm(span=slow, adjust=False).mean()
+
         macd_line = ema_fast - ema_slow
         signal_line = macd_line.ewm(span=signal, adjust=False).mean()
         histogram = macd_line - signal_line
+
         return float(macd_line.iloc[-1]), float(signal_line.iloc[-1]), float(histogram.iloc[-1])
     except:
         return None, None, None
 
 
 def calculate_ema(close_prices, period):
+    """Calculate EMA - FACTOR 4"""
     try:
         if len(close_prices) < period:
             return None
+
         close = np.array([safe_float(x) for x in close_prices])
         series = pd.Series(close)
         ema = series.ewm(span=period, adjust=False).mean()
@@ -253,12 +168,15 @@ def calculate_ema(close_prices, period):
 
 
 def check_volume(volumes, period=20):
+    """Check if volume elevated - FACTOR 6"""
     try:
         if len(volumes) < period:
             return False, 1.0
+
         vols = np.array([safe_float(x) for x in volumes[-period:]])
         current = vols[-1]
         avg = np.mean(vols[:-1])
+
         ratio = current / avg if avg > 0 else 1.0
         return ratio > 1.2, ratio
     except:
@@ -266,43 +184,54 @@ def check_volume(volumes, period=20):
 
 
 def check_fvg(highs, lows):
+    """Check for Fair Value Gap - FACTOR 7"""
     try:
         if len(highs) < 3 or len(lows) < 3:
             return False
-        if highs[-3] < lows[-1]:
+
+        # FVG: Gap between candle 1 high and candle 3 low
+        if highs[-3] < lows[-1]:  # Gap up
             return True
-        if lows[-3] > highs[-1]:
+        if lows[-3] > highs[-1]:  # Gap down
             return True
+
         return False
     except:
         return False
 
 
 def check_support_resistance(closes, highs, lows, period=10):
+    """Check near support/resistance - FACTOR 8"""
     try:
         if len(highs) < period:
             return False
+
         recent_high = max(highs[-period:-1])
         recent_low = min(lows[-period:-1])
         current = closes[-1]
+
         range_size = recent_high - recent_low
+
+        # Check if price is near high or low (within 20%)
         if abs(current - recent_high) < range_size * 0.2:
             return True
         if abs(current - recent_low) < range_size * 0.2:
             return True
+
         return False
     except:
         return False
 
 
 # ════════════════════════════════════════════════════════════════════════════════════
-# ANALYSIS WITH LOGGING
+# ANALYSIS - ALL 8 FACTORS
 # ════════════════════════════════════════════════════════════════════════════════════
 
 def analyze_pair(df, pair_name):
+    """Analyze pair with ALL 8 confluence factors"""
     try:
         if df is None or len(df) < 15:
-            return None
+            return {'pair': pair_name, 'status': 'NO_DATA'}
 
         closes = df['close'].values
         opens = df['open'].values
@@ -310,16 +239,22 @@ def analyze_pair(df, pair_name):
         lows = df['low'].values
         volumes = df['volume'].values
 
+        # Opening range
         opening_high = float(np.max(highs[:3]))
         opening_low = float(np.min(lows[:3]))
         current_price = float(closes[-1])
 
+        # Breakout check
         if current_price > opening_high:
             direction = "LONG"
         elif current_price < opening_low:
             direction = "SHORT"
         else:
-            return None
+            return {
+                'pair': pair_name,
+                'status': 'NO_BREAKOUT',
+                'range': f"{opening_low:.5f} - {opening_high:.5f}"
+            }
 
         # Calculate indicators
         rsi = calculate_rsi(closes, 14)
@@ -330,54 +265,74 @@ def analyze_pair(df, pair_name):
         has_fvg = check_fvg(highs, lows)
         near_sr = check_support_resistance(closes, highs, lows)
 
-        # Score
+        # SCORE ALL 8 FACTORS
         score = 0
         factors = {}
 
+        # FACTOR 1: Breakout
         score += 1
-        factors['1_breakout'] = "✓" if True else "✗"
+        factors['1_breakout'] = f"✓ {direction}"
 
+        # FACTOR 2: RSI
         rsi_value = rsi if rsi is not None else 0
         if rsi is not None and ((direction == "LONG" and 50 < rsi < 70) or (direction == "SHORT" and 30 < rsi < 50)):
             score += 1
-            factors['2_rsi'] = "✓"
+            factors['2_rsi'] = f"✓ RSI {rsi_value:.1f}"
         else:
-            factors['2_rsi'] = "✗"
+            factors['2_rsi'] = f"✗ RSI {rsi_value:.1f}"
 
+        # FACTOR 3: MACD
         if macd and signal:
             if (direction == "LONG" and macd > signal and hist > 0) or (direction == "SHORT" and macd < signal and hist < 0):
                 score += 1
-                factors['3_macd'] = "✓"
+                factors['3_macd'] = "✓ MACD bullish"
             else:
-                factors['3_macd'] = "✗"
+                factors['3_macd'] = "✗ MACD no signal"
+        else:
+            factors['3_macd'] = "? MACD"
 
+        # FACTOR 4: EMA
         if ema20 and ema50:
             if (direction == "LONG" and current_price > ema20 > ema50) or (direction == "SHORT" and current_price < ema20 < ema50):
                 score += 1
-                factors['4_ema'] = "✓"
+                factors['4_ema'] = "✓ EMA aligned"
             else:
-                factors['4_ema'] = "✗"
+                factors['4_ema'] = "✗ EMA not aligned"
+        else:
+            factors['4_ema'] = "? EMA"
 
+        # FACTOR 5: Momentum
         if len(closes) >= 2:
             curr_range = abs(closes[-1] - opens[-1])
             prev_range = abs(closes[-2] - opens[-2])
             if curr_range > prev_range * 1.5:
                 score += 1
-                factors['5_momentum'] = "✓"
+                factors['5_momentum'] = "✓ Strong candle"
+            else:
+                factors['5_momentum'] = "✗ Weak candle"
 
+        # FACTOR 6: Volume
         if is_elevated_vol:
             score += 1
-            factors['6_volume'] = "✓"
+            factors['6_volume'] = f"✓ Volume {vol_ratio:.2f}x"
+        else:
+            factors['6_volume'] = f"✗ Volume {vol_ratio:.2f}x"
 
+        # FACTOR 7: Fair Value Gap
         if has_fvg:
             score += 1
-            factors['7_fvg'] = "✓"
+            factors['7_fvg'] = "✓ FVG gap"
+        else:
+            factors['7_fvg'] = "✗ No FVG"
 
+        # FACTOR 8: Support/Resistance
         if near_sr:
             score += 1
-            factors['8_sr'] = "✓"
+            factors['8_sr'] = "✓ Near S/R"
+        else:
+            factors['8_sr'] = "✗ Away S/R"
 
-        # SL and TP
+        # Calculate SL and TP
         if direction == "LONG":
             sl = opening_low - 0.0015
             tp1 = current_price + 0.0020
@@ -389,23 +344,24 @@ def analyze_pair(df, pair_name):
             tp2 = current_price - 0.0030
             tp3 = current_price - 0.0050
 
-        # Create factors string for logging
-        factors_str = " | ".join([f"{k}:{v}" for k, v in sorted(factors.items())])
-
         return {
             'pair': pair_name,
+            'status': 'SETUP',
             'direction': direction,
+            'price': current_price,
+            'range': f"{opening_low:.5f} - {opening_high:.5f}",
             'score': score,
+            'max_score': 8,
             'recommendation': 'TRADE' if score >= 5 else 'SKIP',
             'sl': sl,
             'tp1': tp1,
             'tp2': tp2,
             'tp3': tp3,
-            'factors': factors_str
+            'factors': factors
         }
 
     except Exception as e:
-        return None
+        return {'pair': pair_name, 'status': 'ERROR', 'message': str(e)[:40]}
 
 
 # ════════════════════════════════════════════════════════════════════════════════════
@@ -413,15 +369,19 @@ def analyze_pair(df, pair_name):
 # ════════════════════════════════════════════════════════════════════════════════════
 
 def main():
-    print("🚀 ORB Analyzer - WITH LOGGING")
+    print("🚀 ORB Analyzer - Complete (ALL 8 FACTORS)")
     print(f"📊 Pairs: {', '.join(PAIRS)}")
-    print(f"⏱️  Runs: {MAX_ITERATIONS} time(s)")
-    print(f"📝 Logging: {LOG_FILE}")
-    print(f"🕐 Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"⏱️  Check every {CHECK_INTERVAL}s")
+    print(f"🔢 Runs: {MAX_ITERATIONS} times then stop")
+    print(f"✅ Scoring: 0-8 points")
+    print(f"🔐 API Key: From GitHub Secrets (Secure)")
 
-    for iteration in range(MAX_ITERATIONS):
+    iteration = 0
+
+    while iteration < MAX_ITERATIONS:
+        iteration += 1
         print(f"\n{'='*80}")
-        print(f"🔄 Check #{iteration + 1}/{MAX_ITERATIONS}")
+        print(f"🔄 Check #{iteration}/{MAX_ITERATIONS} - {datetime.now().strftime('%H:%M:%S')}")
         print('='*80)
 
         for pair in PAIRS:
@@ -429,42 +389,44 @@ def main():
             df = get_twelvedata_candles(pair, API_KEY, TIMEFRAME)
 
             if df is None:
-                print("   ⚠️  No data - skipping")
+                print("   ⚠️  No data")
                 time.sleep(1)
                 continue
 
             result = analyze_pair(df, pair)
 
-            if result is None:
-                print("   Inside opening range - no setup")
-                time.sleep(1)
-                continue
+            if result['status'] == 'NO_DATA':
+                print("   ⚠️  No data")
+            elif result['status'] == 'NO_BREAKOUT':
+                print(f"   Inside range: {result['range']}")
+            elif result['status'] == 'ERROR':
+                print(f"   ❌ {result['message']}")
+            elif result['status'] == 'SETUP':
+                print(f"   Direction: {result['direction']}")
+                print(f"   Score: {result['score']}/{result['max_score']} → {result['recommendation']}")
+                print(f"   ├─ SL: {result['sl']:.5f}")
+                print(f"   ├─ TP1: {result['tp1']:.5f}")
+                print(f"   ├─ TP2: {result['tp2']:.5f}")
+                print(f"   └─ TP3: {result['tp3']:.5f}")
 
-            print(f"   Direction: {result['direction']}")
-            print(f"   Score: {result['score']}/8 → {result['recommendation']}")
-            print(f"   ├─ SL: {result['sl']:.5f}")
-            print(f"   ├─ TP1: {result['tp1']:.5f}")
-            print(f"   ├─ TP2: {result['tp2']:.5f}")
-            print(f"   └─ TP3: {result['tp3']:.5f}")
-
-            # LOG THE RESULT
-            log_result(
-                pair=result['pair'],
-                direction=result['direction'],
-                score=result['score'],
-                recommendation=result['recommendation'],
-                factors_str=result['factors'],
-                sl=result['sl'],
-                tp1=result['tp1'],
-                tp2=result['tp2'],
-                tp3=result['tp3']
-            )
+                if result['factors']:
+                    print(f"\n   All 8 Factors:")
+                    for k in sorted(result['factors'].keys()):
+                        print(f"   {result['factors'][k]}")
 
             time.sleep(1)
 
-    # Print summary
-    print_log_summary()
-    print(f"\n✅ Completed")
+        print(f"\n{'='*80}")
+        if iteration < MAX_ITERATIONS:
+            print(f"⏳ Next in {CHECK_INTERVAL}s (Check {iteration}/{MAX_ITERATIONS})")
+            try:
+                time.sleep(CHECK_INTERVAL)
+            except KeyboardInterrupt:
+                print("\n🛑 Stopped by user")
+                break
+        else:
+            print(f"✅ Completed {MAX_ITERATIONS} checks. Stopping.")
+            break
 
 
 if __name__ == "__main__":
