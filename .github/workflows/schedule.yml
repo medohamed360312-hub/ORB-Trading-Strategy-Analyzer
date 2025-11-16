@@ -23,7 +23,11 @@ jobs:
         with:
           python-version: '3.10'
       - run: pip install -r requirements.txt
-      - run: python orb_analyzer_WITH_LOGGING.py
+      
+      # IMPORTANT: Add this section to pass API key from GitHub Secrets
+      - run: python orb_analyzer_FINAL_WITH_SECRETS.py
+        env:
+          TWELVEDATA_API_KEY: ${{ secrets.TWELVEDATA_API_KEY }}
       
       # Upload as artifact
       - uses: actions/upload-artifact@v4
