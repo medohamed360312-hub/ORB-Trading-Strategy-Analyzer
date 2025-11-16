@@ -27,6 +27,10 @@ TIMEFRAME = "5min"
 CHECK_INTERVAL = 300  # 5 minutes
 MAX_ITERATIONS = 1  # Stop after 1 check
 
+# Log file configuration
+LOG_DIR = "trading_logs"
+LOG_FILE = f"{LOG_DIR}/orb_trading_log.csv"
+
 # ════════════════════════════════════════════════════════════════════════════════════
 # CREATE LOG DIRECTORY AND INITIALIZE CSV
 # ════════════════════════════════════════════════════════════════════════════════════
