@@ -39,10 +39,6 @@ jobs:
           path: trading_logs/
           retention-days: 30
           
-      # Pull latest changes before pushing (FIX FOR GIT CONFLICT)
-      - name: Pull latest changes before push
-        run: |
-          git pull origin main --no-rebase || true
 
       - name: Commit logs to repository
         run: |
