@@ -5,7 +5,6 @@ TwelveData - Real-time data
 All 8 factors: Breakout, RSI, MACD, EMA, Momentum, Volume, FVG, Support/Resistance
 API Key from GitHub Secrets (Secure)
 Updated: SL 30 pips fixed, New output format, Buy/Sell Limit recommendations
-Exports: CSV and Excel files
 """
 
 import requests
@@ -32,11 +31,10 @@ SL_PIPS = 0.0030  # Fixed 30 pips Stop Loss
 
 # Log file configuration
 LOG_DIR = "trading_logs"
-CSV_FILE = f"{LOG_DIR}/orb_trading_log.csv"
-EXCEL_FILE = f"{LOG_DIR}/orb_trading_log.xlsx"
+LOG_FILE = f"{LOG_DIR}/orb_trading_log.csv"
 
 # ════════════════════════════════════════════════════════════════════════════════════
-# CREATE LOG DIRECTORY AND INITIALIZE CSV & EXCEL
+# CREATE LOG DIRECTORY AND INITIALIZE CSV
 # ════════════════════════════════════════════════════════════════════════════════════
 
 def create_log_dir():
@@ -48,26 +46,14 @@ def create_log_dir():
 
 def initialize_csv():
     """Create empty CSV file if it doesn't exist"""
-    if not os.path.isfile(CSV_FILE):
+    if not os.path.isfile(LOG_FILE):
         # Create header row with Date as first column
         df = pd.DataFrame(columns=[
             'Date', 'Time', 'Pair', 'Direction', 'Score', 'Recommendation', 'Entry',
             'SL', 'TP1', 'TP2', 'TP3', 'Factors'
         ])
-        df.to_csv(CSV_FILE, index=False)
-        print(f"✅ Created CSV file: {CSV_FILE}")
-
-
-def initialize_excel():
-    """Create empty Excel file if it doesn't exist"""
-    if not os.path.isfile(EXCEL_FILE):
-        # Create header row with Date as first column
-        df = pd.DataFrame(columns=[
-            'Date', 'Time', 'Pair', 'Direction', 'Score', 'Recommendation', 'Entry',
-            'SL', 'TP1', 'TP2', 'TP3', 'Factors'
-        ])
-        df.to_excel(EXCEL_FILE, index=False, sheet_name='Trading Signals')
-        print(f"✅ Created Excel file: {EXCEL_FILE}")
+        df.to_csv(LOG_FILE, index=False)
+        print(f"✅ Created CSV file: {LOG_FILE}")
 
 
 # ════════════════════════════════════════════════════════════════════════════════════
@@ -267,7 +253,7 @@ def check_support_resistance(closes, highs, lows, period=10):
 
 
 def log_result(pair, direction, score, recommendation, entry, sl, tp1, tp2, tp3, factors_str):
-    """Log trade result to BOTH CSV and Excel files"""
+    """Log trade result to CSV file"""
     try:
         today = datetime.now().strftime("%Y-%m-%d")
         timestamp = datetime.now().strftime("%H:%M:%S")
@@ -287,27 +273,15 @@ def log_result(pair, direction, score, recommendation, entry, sl, tp1, tp2, tp3,
             'Factors': factors_str
         }
 
-        # ════════════════════════════════════════════════════════════════════
-        # SAVE TO CSV
-        # ════════════════════════════════════════════════════════════════════
-        try:
-            df_csv = pd.read_csv(CSV_FILE)
-            new_row = pd.DataFrame([log_entry])
-            df_csv = pd.concat([df_csv, new_row], ignore_index=True)
-            df_csv.to_csv(CSV_FILE, index=False)
-        except Exception as e:
-            print(f"   ⚠️  CSV error: {str(e)[:40]}")
+        # Read existing CSV
+        df = pd.read_csv(LOG_FILE)
 
-        # ════════════════════════════════════════════════════════════════════
-        # SAVE TO EXCEL
-        # ════════════════════════════════════════════════════════════════════
-        try:
-            df_excel = pd.read_excel(EXCEL_FILE, sheet_name='Trading Signals')
-            new_row = pd.DataFrame([log_entry])
-            df_excel = pd.concat([df_excel, new_row], ignore_index=True)
-            df_excel.to_excel(EXCEL_FILE, index=False, sheet_name='Trading Signals')
-        except Exception as e:
-            print(f"   ⚠️  Excel error: {str(e)[:40]}")
+        # Add new row
+        new_row = pd.DataFrame([log_entry])
+        df = pd.concat([df, new_row], ignore_index=True)
+
+        # Save back
+        df.to_csv(LOG_FILE, index=False)
 
         print(f"   📝 Logged: {pair} {direction} Score:{score}")
         return True
@@ -426,7 +400,7 @@ def analyze_pair(df, pair_name):
         else:
             factors['8_sr'] = "✗ Away S/R"
 
-        # Calculate Entry and TP prices
+        # Calculate Entry and TP prices (same as current price for entry)
         entry_price = current_price
 
         # Calculate SL and TP with FIXED 30 PIPS
@@ -470,19 +444,18 @@ def analyze_pair(df, pair_name):
 # ════════════════════════════════════════════════════════════════════════════════════
 
 def main():
-    # CREATE LOG DIR AND FILES FIRST
+    # CREATE LOG DIR AND CSV FIRST
     create_log_dir()
     initialize_csv()
-    initialize_excel()
 
-    print("🚀 ORB Analyzer - WITH CSV & EXCEL EXPORT")
+    print("🚀 ORB Analyzer - UPDATED VERSION")
     print(f"📊 Pairs: {', '.join(PAIRS)}")
     print(f"⏱️  Check every {CHECK_INTERVAL}s")
     print(f"🔢 Runs: {MAX_ITERATIONS} times then stop")
     print(f"✅ Scoring: 0-8 points")
     print(f"🔐 API Key: From GitHub Secrets (Secure)")
     print(f"📊 SL: Fixed 30 pips")
-    print(f"📝 Logging to: {CSV_FILE} and {EXCEL_FILE}")
+    print(f"📝 Logging to: {LOG_FILE}")
 
     iteration = 0
 
@@ -529,7 +502,7 @@ def main():
                     for k in sorted(result['factors'].keys()):
                         print(f"   {result['factors'][k]}")
 
-                # LOG THE TRADE TO CSV AND EXCEL
+                # LOG THE TRADE
                 factors_str = " | ".join([f"{k}:{v}" for k, v in sorted(result['factors'].items())])
                 log_result(
                     result['pair'],
@@ -558,8 +531,7 @@ def main():
             print(f"✅ Completed {MAX_ITERATIONS} checks. Stopping.")
             break
 
-    print(f"✅ CSV file saved: {CSV_FILE}")
-    print(f"✅ Excel file saved: {EXCEL_FILE}")
+    print(f"✅ CSV file saved: {LOG_FILE}")
 
 
 if __name__ == "__main__":
