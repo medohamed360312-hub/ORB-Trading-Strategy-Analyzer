@@ -4,6 +4,7 @@ FOREX ORB STRATEGY - COMPLETE VERSION WITH ALL 8 CONFLUENCE FACTORS
 TwelveData - Real-time data
 All 8 factors: Breakout, RSI, MACD, EMA, Momentum, Volume, FVG, Support/Resistance
 API Key from GitHub Secrets (Secure)
+Updated: SL 30 pips fixed, New output format, Buy/Sell Limit recommendations
 """
 
 import requests
@@ -26,6 +27,7 @@ PAIRS = ["EUR/USD", "GBP/USD", "USD/JPY", "USD/CAD", "EUR/GBP", "XAU/USD"]
 TIMEFRAME = "5min"
 CHECK_INTERVAL = 300  # 5 minutes
 MAX_ITERATIONS = 1  # Stop after 1 check
+SL_PIPS = 0.0030  # Fixed 30 pips Stop Loss
 
 # Log file configuration
 LOG_DIR = "trading_logs"
@@ -45,9 +47,9 @@ def create_log_dir():
 def initialize_csv():
     """Create empty CSV file if it doesn't exist"""
     if not os.path.isfile(LOG_FILE):
-        # Create header row
+        # Create header row with Date as first column
         df = pd.DataFrame(columns=[
-            'Time', 'Pair', 'Direction', 'Score', 'Recommendation', 
+            'Date', 'Time', 'Pair', 'Direction', 'Score', 'Recommendation', 'Entry',
             'SL', 'TP1', 'TP2', 'TP3', 'Factors'
         ])
         df.to_csv(LOG_FILE, index=False)
@@ -250,17 +252,20 @@ def check_support_resistance(closes, highs, lows, period=10):
         return False
 
 
-def log_result(pair, direction, score, recommendation, factors_str, sl, tp1, tp2, tp3):
+def log_result(pair, direction, score, recommendation, entry, sl, tp1, tp2, tp3, factors_str):
     """Log trade result to CSV file"""
     try:
+        today = datetime.now().strftime("%Y-%m-%d")
         timestamp = datetime.now().strftime("%H:%M:%S")
 
         log_entry = {
+            'Date': today,
             'Time': timestamp,
             'Pair': pair,
             'Direction': direction,
             'Score': score,
             'Recommendation': recommendation,
+            'Entry': f"{entry:.5f}",
             'SL': f"{sl:.5f}",
             'TP1': f"{tp1:.5f}",
             'TP2': f"{tp2:.5f}",
@@ -395,22 +400,29 @@ def analyze_pair(df, pair_name):
         else:
             factors['8_sr'] = "✗ Away S/R"
 
-        # Calculate SL and TP
+        # Calculate Entry and TP prices (same as current price for entry)
+        entry_price = current_price
+
+        # Calculate SL and TP with FIXED 30 PIPS
         if direction == "LONG":
-            sl = opening_low - 0.0015
-            tp1 = current_price + 0.0020
-            tp2 = current_price + 0.0030
-            tp3 = current_price + 0.0050
+            sl = entry_price - SL_PIPS
+            tp1 = entry_price + 0.0020
+            tp2 = entry_price + 0.0030
+            tp3 = entry_price + 0.0050
+            order_type = "Buy Limit"
         else:
-            sl = opening_high + 0.0015
-            tp1 = current_price - 0.0020
-            tp2 = current_price - 0.0030
-            tp3 = current_price - 0.0050
+            sl = entry_price + SL_PIPS
+            tp1 = entry_price - 0.0020
+            tp2 = entry_price - 0.0030
+            tp3 = entry_price - 0.0050
+            order_type = "Sell Limit"
 
         return {
             'pair': pair_name,
             'status': 'SETUP',
             'direction': direction,
+            'order_type': order_type,
+            'entry': entry_price,
             'price': current_price,
             'range': f"{opening_low:.5f} - {opening_high:.5f}",
             'score': score,
@@ -436,12 +448,13 @@ def main():
     create_log_dir()
     initialize_csv()
 
-    print("🚀 ORB Analyzer - Complete (ALL 8 FACTORS)")
+    print("🚀 ORB Analyzer - UPDATED VERSION")
     print(f"📊 Pairs: {', '.join(PAIRS)}")
     print(f"⏱️  Check every {CHECK_INTERVAL}s")
     print(f"🔢 Runs: {MAX_ITERATIONS} times then stop")
     print(f"✅ Scoring: 0-8 points")
     print(f"🔐 API Key: From GitHub Secrets (Secure)")
+    print(f"📊 SL: Fixed 30 pips")
     print(f"📝 Logging to: {LOG_FILE}")
 
     iteration = 0
@@ -470,15 +483,22 @@ def main():
             elif result['status'] == 'ERROR':
                 print(f"   ❌ {result['message']}")
             elif result['status'] == 'SETUP':
-                print(f"   Direction: {result['direction']}")
-                print(f"   Score: {result['score']}/{result['max_score']} → {result['recommendation']}")
-                print(f"   ├─ SL: {result['sl']:.5f}")
-                print(f"   ├─ TP1: {result['tp1']:.5f}")
-                print(f"   ├─ TP2: {result['tp2']:.5f}")
-                print(f"   └─ TP3: {result['tp3']:.5f}")
+                print(f"Direction: {result['direction']}")
+                print(f"Score: {result['score']}/{result['max_score']} → {result['recommendation']}")
+                print(f"├─ Recommendation: {result['order_type']}")
+                print(f"├─ Entry:")
+                print(f"{result['entry']:.5f}")
+                print(f"├─ SL:")
+                print(f"{result['sl']:.5f}")
+                print(f"├─ TP1:")
+                print(f"{result['tp1']:.5f}")
+                print(f"├─ TP2:")
+                print(f"{result['tp2']:.5f}")
+                print(f"└─ TP3:")
+                print(f"{result['tp3']:.5f}")
 
                 if result['factors']:
-                    print(f"\n   All 8 Factors:")
+                    print(f"\nAll 8 Factors:")
                     for k in sorted(result['factors'].keys()):
                         print(f"   {result['factors'][k]}")
 
@@ -488,12 +508,13 @@ def main():
                     result['pair'],
                     result['direction'],
                     result['score'],
-                    result['recommendation'],
-                    factors_str,
+                    result['order_type'],
+                    result['entry'],
                     result['sl'],
                     result['tp1'],
                     result['tp2'],
-                    result['tp3']
+                    result['tp3'],
+                    factors_str
                 )
 
             time.sleep(1)
