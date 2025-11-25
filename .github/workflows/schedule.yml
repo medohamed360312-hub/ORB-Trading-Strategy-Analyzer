@@ -29,7 +29,7 @@ jobs:
       - run: mkdir -p trading_logs
       
       # FIXED: Added 'python' command
-      - run: python orb_analyzer_UPDATED_v2.py
+      - run: python orb_analyzer_UPDATED_v3.py
         env:
           TWELVEDATA_API_KEY: ${{ secrets.TWELVEDATA_API_KEY }}
       
