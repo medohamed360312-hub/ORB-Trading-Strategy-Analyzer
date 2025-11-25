@@ -252,7 +252,7 @@ def check_support_resistance(closes, highs, lows, period=10):
         return False
 
 
-def log_result(pair, direction, score, recommendation, entry, sl, tp1, tp2, tp3, factors_str):
+def log_result(pair, direction, score, order_type, entry, sl, tp1, tp2, tp3, factors_str):
     """Log trade result to CSV file"""
     try:
         today = datetime.now().strftime("%Y-%m-%d")
@@ -264,7 +264,7 @@ def log_result(pair, direction, score, recommendation, entry, sl, tp1, tp2, tp3,
             'Pair': pair,
             'Direction': direction,
             'Score': score,
-            'Recommendation': recommendation,
+            'Recommendation': order_type if score >= 5 else 'SKIP',
             'Entry': f"{entry:.5f}",
             'SL': f"{sl:.5f}",
             'TP1': f"{tp1:.5f}",
