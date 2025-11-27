@@ -4,7 +4,7 @@ FOREX ORB STRATEGY - COMPLETE VERSION WITH ALL 8 CONFLUENCE FACTORS
 TwelveData - Real-time data
 All 8 factors: Breakout, RSI, MACD, EMA, Momentum, Volume, FVG, Support/Resistance
 API Key from GitHub Secrets (Secure)
-Updated: SL 30 pips fixed, New output format, Buy/Sell Limit recommendations
+Updated: SL pips is not fixed, New output format, Buy/Sell Limit recommendations
 """
 
 import requests
@@ -27,7 +27,7 @@ PAIRS = ["EUR/USD", "GBP/USD", "USD/JPY", "USD/CAD", "EUR/GBP", "XAU/USD"]
 TIMEFRAME = "5min"
 CHECK_INTERVAL = 300  # 5 minutes
 MAX_ITERATIONS = 1  # Stop after 1 check
-SL_PIPS = 0.0030  # Fixed 30 pips Stop Loss
+SL_PERCENTAGE = 0.005  # 0.5% of entry price
 
 # Log file configuration
 LOG_DIR = "trading_logs"
@@ -265,11 +265,11 @@ def log_result(pair, direction, score, order_type, entry, sl, tp1, tp2, tp3, fac
             'Direction': direction,
             'Score': score,
             'Recommendation': order_type if score >= 5 else 'SKIP',
-            'Entry': f"{entry:.5f}",
-            'SL': f"{sl:.5f}",
-            'TP1': f"{tp1:.5f}",
-            'TP2': f"{tp2:.5f}",
-            'TP3': f"{tp3:.5f}",
+            'Entry': f"{entry:.3f}",
+            'SL': f"{sl:.3f}",
+            'TP1': f"{tp1:.3f}",
+            'TP2': f"{tp2:.3f}",
+            'TP3': f"{tp3:.3f}",
             'Factors': factors_str
         }
 
@@ -405,16 +405,18 @@ def analyze_pair(df, pair_name):
 
         # Calculate SL and TP with FIXED 30 PIPS
         if direction == "LONG":
-            sl = entry_price - SL_PIPS
-            tp1 = entry_price + 0.0020
-            tp2 = entry_price + 0.0030
-            tp3 = entry_price + 0.0050
+            sl_distance = round(entry_price * SL_PERCENTAGE, 3)
+            sl = round(entry_price - sl_distance, 3)
+            tp1 = round(entry_price + (sl_distance * 1), 3)
+            tp2 = round(entry_price + (sl_distance * 2), 3)
+            tp3 = round(entry_price + (sl_distance * 3), 3)
             order_type = "Buy Limit"
         else:
-            sl = entry_price + SL_PIPS
-            tp1 = entry_price - 0.0020
-            tp2 = entry_price - 0.0030
-            tp3 = entry_price - 0.0050
+            sl_distance = round(entry_price * SL_PERCENTAGE, 3)
+            sl = round(entry_price + sl_distance, 3)
+            tp1 = round(entry_price - (sl_distance * 1), 3)
+            tp2 = round(entry_price - (sl_distance * 2), 3)
+            tp3 = round(entry_price - (sl_distance * 3), 3)
             order_type = "Sell Limit"
 
         return {
