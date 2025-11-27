@@ -265,11 +265,11 @@ def log_result(pair, direction, score, order_type, entry, sl, tp1, tp2, tp3, fac
             'Direction': direction,
             'Score': score,
             'Recommendation': order_type if score >= 5 else 'SKIP',
-            'Entry': f"{entry:.3f}",
-            'SL': f"{sl:.3f}",
-            'TP1': f"{tp1:.3f}",
-            'TP2': f"{tp2:.3f}",
-            'TP3': f"{tp3:.3f}",
+            'Entry': f"{entry:.4f}",
+            'SL': f"{sl:.4f}",
+            'TP1': f"{tp1:.4f}",
+            'TP2': f"{tp2:.4f}",
+            'TP3': f"{tp3:.4f}",
             'Factors': factors_str
         }
 
@@ -405,18 +405,18 @@ def analyze_pair(df, pair_name):
 
         # Calculate SL and TP with FIXED 30 PIPS
         if direction == "LONG":
-            sl_distance = round(entry_price * SL_PERCENTAGE, 3)
-            sl = round(entry_price - sl_distance, 3)
-            tp1 = round(entry_price + (sl_distance * 1), 3)
-            tp2 = round(entry_price + (sl_distance * 2), 3)
-            tp3 = round(entry_price + (sl_distance * 3), 3)
+            sl_distance = round(entry_price * SL_PERCENTAGE, 4)
+            sl = round(entry_price - sl_distance, 4)
+            tp1 = round(entry_price + (sl_distance * 1), 4)
+            tp2 = round(entry_price + (sl_distance * 2), 4)
+            tp3 = round(entry_price + (sl_distance * 3), 4)
             order_type = "Buy Limit"
         else:
-            sl_distance = round(entry_price * SL_PERCENTAGE, 3)
-            sl = round(entry_price + sl_distance, 3)
-            tp1 = round(entry_price - (sl_distance * 1), 3)
-            tp2 = round(entry_price - (sl_distance * 2), 3)
-            tp3 = round(entry_price - (sl_distance * 3), 3)
+            sl_distance = round(entry_price * SL_PERCENTAGE, 4)
+            sl = round(entry_price + sl_distance, 4)
+            tp1 = round(entry_price - (sl_distance * 1), 4)
+            tp2 = round(entry_price - (sl_distance * 2), 4)
+            tp3 = round(entry_price - (sl_distance * 3), 4)
             order_type = "Sell Limit"
 
         return {
@@ -489,15 +489,15 @@ def main():
                 print(f"Score: {result['score']}/{result['max_score']} → {result['recommendation']}")
                 print(f"├─ Recommendation: {result['order_type']}")
                 print(f"├─ Entry:")
-                print(f"{result['entry']:.3f}")
+                print(f"{result['entry']:.4f}")
                 print(f"├─ SL:")
-                print(f"{result['sl']:.3f}")
+                print(f"{result['sl']:.4f}")
                 print(f"├─ TP1:")
-                print(f"{result['tp1']:.3f}")
+                print(f"{result['tp1']:.4f}")
                 print(f"├─ TP2:")
-                print(f"{result['tp2']:.3f}")
+                print(f"{result['tp2']:.4f}")
                 print(f"└─ TP3:")
-                print(f"{result['tp3']:.3f}")
+                print(f"{result['tp3']:.4f}")
 
                 if result['factors']:
                     print(f"\nAll 8 Factors:")
