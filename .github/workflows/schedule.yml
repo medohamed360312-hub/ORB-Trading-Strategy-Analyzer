@@ -2,8 +2,9 @@ name: Run ORB Analyzer Scheduled
 
 on:
   schedule:
-    - cron: '*/5 * * * 1-5'
+    - cron: '*/5 * * * *'
   workflow_dispatch:
+
 
 
 
