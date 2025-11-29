@@ -1,3 +1,5 @@
+name: Run ORB Analyzer Scheduled
+
 on:
   workflow_dispatch:
   repository_dispatch:
