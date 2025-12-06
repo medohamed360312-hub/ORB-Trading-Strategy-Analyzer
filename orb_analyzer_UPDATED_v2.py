@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """
-FOREX ORB STRATEGY - COMPLETE VERSION WITH ALL 8 CONFLUENCE FACTORS
+FOREX ORB STRATEGY - DYNAMIC RISK MANAGEMENT VERSION
 TwelveData - Real-time data
 All 8 factors: Breakout, RSI, MACD, EMA, Momentum, Volume, FVG, Support/Resistance
+Dynamic: Risk%, SL, TP, Lot sizing based on 8-factor score
+Score-based: Higher confidence = Higher risk/reward
 API Key from GitHub Secrets (Secure)
-Updated: SL pips is not fixed, New output format, Buy/Sell Limit recommendations
 """
 
 import requests
@@ -13,47 +14,66 @@ import numpy as np
 from datetime import datetime
 import time
 import os
+import math
 
 # ════════════════════════════════════════════════════════════════════════════════════
-# CONFIGURATION
+# CONFIGURATION & CONSTANTS
 # ════════════════════════════════════════════════════════════════════════════════════
 
-# Read API key from GitHub Secrets environment variable
 API_KEY = os.getenv('TWELVEDATA_API_KEY', 'ALPHA')
 BASE_URL = "https://api.twelvedata.com"
 
-PAIRS = ["EUR/USD", "GBP/USD", "USD/JPY", "USD/CAD", "EUR/GBP", "XAU/USD"]
+# Updated pairs: Added USD/CHF and AUD/USD
+PAIRS = ["EUR/USD", "GBP/USD", "USD/JPY", "USD/CAD", "EUR/GBP", "XAU/USD", "USD/CHF", "AUD/USD"]
+
+# Pair configuration with pip values and decimal precision
+PIP_VALUES = {
+    "EUR/USD": {"pip_value": 10, "decimals": 4, "pip_min": 0.0001, "margin_req": 1000},
+    "GBP/USD": {"pip_value": 10, "decimals": 4, "pip_min": 0.0001, "margin_req": 1000},
+    "USD/JPY": {"pip_value": 0.09, "decimals": 4, "pip_min": 0.01, "margin_req": 1000},
+    "USD/CAD": {"pip_value": 10, "decimals": 4, "pip_min": 0.0001, "margin_req": 1000},
+    "EUR/GBP": {"pip_value": 10, "decimals": 4, "pip_min": 0.0001, "margin_req": 1000},
+    "XAU/USD": {"pip_value": 10, "decimals": 4, "pip_min": 0.0001, "margin_req": 5000},
+    "USD/CHF": {"pip_value": 10, "decimals": 4, "pip_min": 0.0001, "margin_req": 1000},
+    "AUD/USD": {"pip_value": 10, "decimals": 4, "pip_min": 0.0001, "margin_req": 1000},
+}
+
+# Account parameters
+ACCOUNT_EQUITY = 3417
+ACCOUNT_LEVERAGE = 30
+MAX_MARGIN_UTILIZATION = 0.5  # 50%
 
 TIMEFRAME = "5min"
 CHECK_INTERVAL = 300  # 5 minutes
-MAX_ITERATIONS = 1  # Stop after 1 check
-SL_PERCENTAGE = 0.005  # 0.5% of entry price
-
-# Log file configuration
+MAX_ITERATIONS = 1
 LOG_DIR = "trading_logs"
 LOG_FILE = f"{LOG_DIR}/orb_trading_log.csv"
 
 # ════════════════════════════════════════════════════════════════════════════════════
-# CREATE LOG DIRECTORY AND INITIALIZE CSV
+# LOG DIRECTORY & CSV INITIALIZATION
 # ════════════════════════════════════════════════════════════════════════════════════
 
 def create_log_dir():
-    """Create logs directory if it doesn't exist"""
+    """Create logs directory"""
     if not os.path.exists(LOG_DIR):
         os.makedirs(LOG_DIR)
-        print(f"✅ Created log directory: {LOG_DIR}")
+        print(f"✅ Log directory: {LOG_DIR}")
 
 
 def initialize_csv():
-    """Create empty CSV file if it doesn't exist"""
+    """Create enhanced CSV with dynamic calculation columns"""
     if not os.path.isfile(LOG_FILE):
-        # Create header row with Date as first column
         df = pd.DataFrame(columns=[
-            'Date', 'Time', 'Pair', 'Direction', 'Score', 'Recommendation', 'Entry',
-            'SL', 'TP1', 'TP2', 'TP3', 'Factors'
+            'Date', 'Time', 'Pair', 'Direction', 'Score', 'Recommendation',
+            'Entry', 'SL', 'TP',
+            'ATR', 'SL_Multiplier', 'SL_Distance', 'SL_Pips',
+            'Risk%', 'Risk_Amount$', 'RR_Ratio', 'TP_Distance', 'TP_Pips',
+            'Base_Lot', 'Adjusted_Lot', 'Final_Lot',
+            'Margin_Used$', 'Margin_Util%',
+            'Factors'
         ])
         df.to_csv(LOG_FILE, index=False)
-        print(f"✅ Created CSV file: {LOG_FILE}")
+        print(f"✅ CSV created: {LOG_FILE}")
 
 
 # ════════════════════════════════════════════════════════════════════════════════════
@@ -68,11 +88,15 @@ def safe_float(value):
         return 0.0
 
 
+def round_down_lot(lot_size, precision=0.01):
+    """Round lot size DOWN to specified precision"""
+    return math.floor(lot_size / precision) * precision
+
+
 def get_twelvedata_candles(pair, api_key, interval="5min", count=50):
     """Get candles from TwelveData"""
     try:
         url = f"{BASE_URL}/time_series"
-
         params = {
             "symbol": pair,
             "interval": interval,
@@ -81,28 +105,18 @@ def get_twelvedata_candles(pair, api_key, interval="5min", count=50):
             "format": "JSON"
         }
 
-        print(f"   📡 {pair}...", end="", flush=True)
         response = requests.get(url, params=params, timeout=10)
-
         if response.status_code != 200:
-            print(f" ❌ HTTP {response.status_code}")
             return None
 
         data = response.json()
-
-        if "status" in data:
-            if data["status"] == "error":
-                print(f" ❌ {data.get('message', 'Error')[:40]}")
-                return None
-
+        if "status" in data and data["status"] == "error":
+            return None
         if "values" not in data:
-            print(f" ❌ No values")
             return None
 
         candles = data["values"]
-
         if not candles or len(candles) < 15:
-            print(f" ❌ Only {len(candles) if candles else 0} candles")
             return None
 
         records = []
@@ -120,17 +134,131 @@ def get_twelvedata_candles(pair, api_key, interval="5min", count=50):
                 continue
 
         if len(records) < 15:
-            print(f" ❌ Bad data")
             return None
 
         df = pd.DataFrame(records)
         df = df.iloc[::-1].reset_index(drop=True)
-        print(f" ✓ {len(df)} candles")
         return df
 
     except Exception as e:
-        print(f" ❌ {str(e)[:40]}")
         return None
+
+
+# ════════════════════════════════════════════════════════════════════════════════════
+# DYNAMIC RISK MANAGEMENT FUNCTIONS
+# ════════════════════════════════════════════════════════════════════════════════════
+
+def calculate_atr(closes, period=14):
+    """Calculate Average True Range (for volatility)"""
+    try:
+        if len(closes) < period:
+            return None
+
+        close = np.array([safe_float(x) for x in closes])
+        tr = np.abs(np.diff(close))
+        atr = np.mean(tr[-period:])
+        return float(atr)
+    except:
+        return None
+
+
+def calculate_risk_percentage(score):
+    """Calculate risk % based on score: 2% to 3%"""
+    if score <= 0:
+        return None
+    return 2.0 + (score * 0.125)
+
+
+def calculate_rr_ratio(score):
+    """Calculate Risk:Reward ratio based on score: 1:1 to 2.5:1"""
+    return 1.0 + (score * 0.1875)
+
+
+def calculate_sl_distance(atr, score):
+    """Calculate SL distance based on ATR and score"""
+    if atr is None or score <= 0:
+        return None
+
+    sl_multiplier = 1.0 + (0.25 * score / 8)
+    sl_distance = atr * sl_multiplier
+    return sl_distance, sl_multiplier
+
+
+def convert_to_pips(distance, pip_min):
+    """Convert distance to pips"""
+    try:
+        if pip_min <= 0:
+            return 0
+        pips = distance / pip_min
+        return pips
+    except:
+        return 0
+
+
+def calculate_base_lot(risk_amount, sl_pips, pip_value):
+    """Calculate base lot from risk amount"""
+    try:
+        if sl_pips <= 0 or pip_value <= 0:
+            return 0
+
+        base_lot = risk_amount / (sl_pips * pip_value)
+        return base_lot
+    except:
+        return 0
+
+
+def adjust_lot_for_score(base_lot, score):
+    """Adjust lot by score multiplier"""
+    if score <= 0:
+        return base_lot
+    return base_lot * (score / 8)
+
+
+def check_margin_safety(lot, entry_price, leverage, equity, max_util=0.5):
+    """Check margin safety and reduce lot if needed"""
+    try:
+        # Calculate margin used
+        margin_used = (lot * 100000 * entry_price) / leverage
+        max_available_margin = equity * leverage * max_util
+        margin_util_pct = (margin_used / max_available_margin) * 100
+
+        # If over limit, reduce proportionally
+        if margin_util_pct > (max_util * 100):
+            reduction_factor = (max_util / (margin_util_pct / 100))
+            final_lot = lot * reduction_factor
+            return final_lot, margin_util_pct, margin_used
+
+        return lot, margin_util_pct, margin_used
+    except:
+        return lot, 0, 0
+
+
+def recalculate_effective_pips(risk_amount, final_lot, pip_value, pip_min):
+    """Recalculate effective pips based on final lot"""
+    try:
+        if final_lot <= 0 or pip_value <= 0:
+            return 0
+
+        final_sl_distance = risk_amount / (final_lot * pip_value)
+        final_sl_pips = final_sl_distance / pip_min
+        return final_sl_distance, final_sl_pips
+    except:
+        return 0, 0
+
+
+def calculate_sl_tp(entry, sl_distance, rr_ratio, direction):
+    """Calculate SL and TP prices"""
+    try:
+        if direction == "LONG":
+            sl = entry - sl_distance
+            tp = entry + (sl_distance * rr_ratio)
+        else:  # SHORT
+            sl = entry + sl_distance
+            tp = entry - (sl_distance * rr_ratio)
+
+        return sl, tp
+    except:
+        return None, None
 
 
 # ════════════════════════════════════════════════════════════════════════════════════
@@ -218,12 +346,8 @@ def check_fvg(highs, lows):
         if len(highs) < 3 or len(lows) < 3:
             return False
 
-        # FVG: Gap between candle 1 high and candle 3 low
-        if highs[-3] < lows[-1]:  # Gap up
+        if highs[-3] < lows[-1] or lows[-3] > highs[-1]:
             return True
-        if lows[-3] > highs[-1]:  # Gap down
-            return True
-
         return False
     except:
         return False
@@ -238,22 +362,21 @@ def check_support_resistance(closes, highs, lows, period=10):
         recent_high = max(highs[-period:-1])
         recent_low = min(lows[-period:-1])
         current = closes[-1]
-
         range_size = recent_high - recent_low
 
-        # Check if price is near high or low (within 20%)
-        if abs(current - recent_high) < range_size * 0.2:
+        if abs(current - recent_high) < range_size * 0.2 or abs(current - recent_low) < range_size * 0.2:
             return True
-        if abs(current - recent_low) < range_size * 0.2:
-            return True
-
         return False
     except:
         return False
 
 
-def log_result(pair, direction, score, order_type, entry, sl, tp1, tp2, tp3, factors_str):
-    """Log trade result to CSV file"""
+# ════════════════════════════════════════════════════════════════════════════════════
+# LOGGING FUNCTION
+# ════════════════════════════════════════════════════════════════════════════════════
+
+def log_enhanced_result(pair, direction, score, recommendation, calculations, factors_str):
+    """Log complete trade with all calculation data"""
     try:
         today = datetime.now().strftime("%Y-%m-%d")
         timestamp = datetime.now().strftime("%H:%M:%S")
@@ -264,26 +387,31 @@ def log_result(pair, direction, score, order_type, entry, sl, tp1, tp2, tp3, fac
             'Pair': pair,
             'Direction': direction,
             'Score': score,
-            'Recommendation': order_type if score >= 5 else 'SKIP',
-            'Entry': f"{entry:.4f}",
-            'SL': f"{sl:.4f}",
-            'TP1': f"{tp1:.4f}",
-            'TP2': f"{tp2:.4f}",
-            'TP3': f"{tp3:.4f}",
+            'Recommendation': recommendation,
+            'Entry': f"{calculations['entry']:.4f}",
+            'SL': f"{calculations['sl']:.4f}",
+            'TP': f"{calculations['tp']:.4f}",
+            'ATR': f"{calculations['atr']:.6f}",
+            'SL_Multiplier': f"{calculations['sl_multiplier']:.4f}",
+            'SL_Distance': f"{calculations['sl_distance']:.6f}",
+            'SL_Pips': f"{calculations['sl_pips']:.2f}",
+            'Risk%': f"{calculations['risk_pct']:.3f}%",
+            'Risk_Amount$': f"{calculations['risk_amount']:.2f}",
+            'RR_Ratio': f"{calculations['rr_ratio']:.2f}:1",
+            'TP_Distance': f"{calculations['tp_distance']:.6f}",
+            'TP_Pips': f"{calculations['tp_pips']:.2f}",
+            'Base_Lot': f"{calculations['base_lot']:.3f}",
+            'Adjusted_Lot': f"{calculations['adjusted_lot']:.3f}",
+            'Final_Lot': f"{calculations['final_lot']:.3f}",
+            'Margin_Used$': f"{calculations['margin_used']:.2f}",
+            'Margin_Util%': f"{calculations['margin_util_pct']:.2f}%",
             'Factors': factors_str
         }
 
-        # Read existing CSV
         df = pd.read_csv(LOG_FILE)
-
-        # Add new row
         new_row = pd.DataFrame([log_entry])
         df = pd.concat([df, new_row], ignore_index=True)
-
-        # Save back
         df.to_csv(LOG_FILE, index=False)
-
-        print(f"   📝 Logged: {pair} {direction} Score:{score}")
         return True
 
     except Exception as e:
@@ -292,13 +420,13 @@ def log_result(pair, direction, score, order_type, entry, sl, tp1, tp2, tp3, fac
 
 
 # ════════════════════════════════════════════════════════════════════════════════════
-# ANALYSIS - ALL 8 FACTORS
+# MAIN ANALYSIS FUNCTION
 # ════════════════════════════════════════════════════════════════════════════════════
 
 def analyze_pair(df, pair_name):
-    """Analyze pair with ALL 8 confluence factors"""
+    """Analyze pair with ALL 8 confluence factors + dynamic risk management"""
     try:
-        if df is None or len(df) < 15:
+        if df is None or len(df) < 15 or pair_name not in PIP_VALUES:
             return {'pair': pair_name, 'status': 'NO_DATA'}
 
         closes = df['close'].values
@@ -307,24 +435,19 @@ def analyze_pair(df, pair_name):
         lows = df['low'].values
         volumes = df['volume'].values
 
-        # Opening range
+        # Opening range breakout check
         opening_high = float(np.max(highs[:3]))
         opening_low = float(np.min(lows[:3]))
         current_price = float(closes[-1])
 
-        # Breakout check
         if current_price > opening_high:
             direction = "LONG"
         elif current_price < opening_low:
             direction = "SHORT"
         else:
-            return {
-                'pair': pair_name,
-                'status': 'NO_BREAKOUT',
-                'range': f"{opening_low:.5f} - {opening_high:.5f}"
-            }
+            return {'pair': pair_name, 'status': 'NO_BREAKOUT'}
 
-        # Calculate indicators
+        # Calculate indicators for 8 factors
         rsi = calculate_rsi(closes, 14)
         macd, signal, hist = calculate_macd(closes)
         ema20 = calculate_ema(closes, 20)
@@ -332,8 +455,9 @@ def analyze_pair(df, pair_name):
         is_elevated_vol, vol_ratio = check_volume(volumes)
         has_fvg = check_fvg(highs, lows)
         near_sr = check_support_resistance(closes, highs, lows)
+        atr = calculate_atr(closes, 14)
 
-        # SCORE ALL 8 FACTORS
+        # Score all 8 factors
         score = 0
         factors = {}
 
@@ -345,29 +469,29 @@ def analyze_pair(df, pair_name):
         rsi_value = rsi if rsi is not None else 0
         if rsi is not None and ((direction == "LONG" and 50 < rsi < 70) or (direction == "SHORT" and 30 < rsi < 50)):
             score += 1
-            factors['2_rsi'] = f"✓ RSI {rsi_value:.1f}"
+            factors['2_rsi'] = f"✓ {rsi_value:.1f}"
         else:
-            factors['2_rsi'] = f"✗ RSI {rsi_value:.1f}"
+            factors['2_rsi'] = f"✗ {rsi_value:.1f}"
 
         # FACTOR 3: MACD
         if macd and signal:
             if (direction == "LONG" and macd > signal and hist > 0) or (direction == "SHORT" and macd < signal and hist < 0):
                 score += 1
-                factors['3_macd'] = "✓ MACD bullish"
+                factors['3_macd'] = "✓"
             else:
-                factors['3_macd'] = "✗ MACD no signal"
+                factors['3_macd'] = "✗"
         else:
-            factors['3_macd'] = "? MACD"
+            factors['3_macd'] = "?"
 
         # FACTOR 4: EMA
         if ema20 and ema50:
             if (direction == "LONG" and current_price > ema20 > ema50) or (direction == "SHORT" and current_price < ema20 < ema50):
                 score += 1
-                factors['4_ema'] = "✓ EMA aligned"
+                factors['4_ema'] = "✓"
             else:
-                factors['4_ema'] = "✗ EMA not aligned"
+                factors['4_ema'] = "✗"
         else:
-            factors['4_ema'] = "? EMA"
+            factors['4_ema'] = "?"
 
         # FACTOR 5: Momentum
         if len(closes) >= 2:
@@ -375,65 +499,131 @@ def analyze_pair(df, pair_name):
             prev_range = abs(closes[-2] - opens[-2])
             if curr_range > prev_range * 1.5:
                 score += 1
-                factors['5_momentum'] = "✓ Strong candle"
+                factors['5_momentum'] = "✓"
             else:
-                factors['5_momentum'] = "✗ Weak candle"
+                factors['5_momentum'] = "✗"
 
         # FACTOR 6: Volume
         if is_elevated_vol:
             score += 1
-            factors['6_volume'] = f"✓ Volume {vol_ratio:.2f}x"
+            factors['6_volume'] = "✓"
         else:
-            factors['6_volume'] = f"✗ Volume {vol_ratio:.2f}x"
+            factors['6_volume'] = "✗"
 
         # FACTOR 7: Fair Value Gap
         if has_fvg:
             score += 1
-            factors['7_fvg'] = "✓ FVG gap"
+            factors['7_fvg'] = "✓"
         else:
-            factors['7_fvg'] = "✗ No FVG"
+            factors['7_fvg'] = "✗"
 
         # FACTOR 8: Support/Resistance
         if near_sr:
             score += 1
-            factors['8_sr'] = "✓ Near S/R"
+            factors['8_sr'] = "✓"
         else:
-            factors['8_sr'] = "✗ Away S/R"
+            factors['8_sr'] = "✗"
 
-        # Calculate Entry and TP prices (same as current price for entry)
+        # Skip if no score
+        if score == 0:
+            return {'pair': pair_name, 'status': 'NO_SCORE'}
+
+        # ─────────────────────────────────────────────────────────────────────
+        # DYNAMIC RISK MANAGEMENT CALCULATIONS
+        # ─────────────────────────────────────────────────────────────────────
+
+        pair_config = PIP_VALUES[pair_name]
         entry_price = current_price
 
-        # Calculate SL and TP with FIXED 30 PIPS
-        if direction == "LONG":
-            sl_distance = round(entry_price * SL_PERCENTAGE, 4)
-            sl = round(entry_price - sl_distance, 4)
-            tp1 = round(entry_price + (sl_distance * 1), 4)
-            tp2 = round(entry_price + (sl_distance * 2), 4)
-            tp3 = round(entry_price + (sl_distance * 3), 4)
-            order_type = "Buy Limit"
-        else:
-            sl_distance = round(entry_price * SL_PERCENTAGE, 4)
-            sl = round(entry_price + sl_distance, 4)
-            tp1 = round(entry_price - (sl_distance * 1), 4)
-            tp2 = round(entry_price - (sl_distance * 2), 4)
-            tp3 = round(entry_price - (sl_distance * 3), 4)
-            order_type = "Sell Limit"
+        # 1. Calculate risk %
+        risk_pct = calculate_risk_percentage(score)
+        if risk_pct is None:
+            risk_pct = 2.0
+
+        # 2. Calculate risk amount
+        risk_amount = ACCOUNT_EQUITY * (risk_pct / 100)
+
+        # 3. Calculate R:R ratio
+        rr_ratio = calculate_rr_ratio(score)
+
+        # 4. Calculate SL distance and multiplier
+        sl_result = calculate_sl_distance(atr, score)
+        if sl_result is None:
+            return {'pair': pair_name, 'status': 'ERROR', 'message': 'ATR calc failed'}
+
+        sl_distance, sl_multiplier = sl_result
+
+        # 5. Convert to pips
+        sl_pips_initial = convert_to_pips(sl_distance, pair_config['pip_min'])
+
+        # 6. Calculate base lot
+        base_lot = calculate_base_lot(risk_amount, sl_pips_initial, pair_config['pip_value'])
+
+        # 7. Adjust for score
+        adjusted_lot = adjust_lot_for_score(base_lot, score)
+
+        # 8. Apply constraints and round
+        adjusted_lot = max(0.01, min(2.0, adjusted_lot))  # Min 0.01, Max 2.0
+        adjusted_lot = round_down_lot(adjusted_lot, 0.01)
+
+        # 9. Margin safety check
+        final_lot, margin_util_pct, margin_used = check_margin_safety(
+            adjusted_lot, entry_price, ACCOUNT_LEVERAGE, ACCOUNT_EQUITY, MAX_MARGIN_UTILIZATION
+        )
+        final_lot = round_down_lot(final_lot, 0.01)
+
+        # 10. Recalculate effective pips based on final lot
+        final_sl_distance, final_sl_pips = recalculate_effective_pips(
+            risk_amount, final_lot, pair_config['pip_value'], pair_config['pip_min']
+        )
+
+        # 11. Calculate SL and TP prices
+        sl, tp = calculate_sl_tp(entry_price, final_sl_distance, rr_ratio, direction)
+
+        if sl is None or tp is None:
+            return {'pair': pair_name, 'status': 'ERROR', 'message': 'SL/TP calc failed'}
+
+        # Round to pair decimals
+        decimals = pair_config['decimals']
+        sl = round(sl, decimals)
+        tp = round(tp, decimals)
+
+        # Calculate TP pips
+        tp_distance = abs(tp - entry_price)
+        tp_pips = convert_to_pips(tp_distance, pair_config['pip_min'])
+
+        # Prepare calculations dict for logging
+        calculations = {
+            'entry': entry_price,
+            'sl': sl,
+            'tp': tp,
+            'atr': atr if atr is not None else 0,
+            'sl_multiplier': sl_multiplier,
+            'sl_distance': final_sl_distance,
+            'sl_pips': final_sl_pips,
+            'risk_pct': risk_pct,
+            'risk_amount': risk_amount,
+            'rr_ratio': rr_ratio,
+            'tp_distance': tp_distance,
+            'tp_pips': tp_pips,
+            'base_lot': base_lot,
+            'adjusted_lot': adjusted_lot,
+            'final_lot': final_lot,
+            'margin_used': margin_used,
+            'margin_util_pct': margin_util_pct
+        }
+
+        recommendation = 'TRADE' if score >= 5 else 'SKIP'
+        order_type = f"BUY {final_lot}" if direction == "LONG" else f"SELL {final_lot}"
 
         return {
             'pair': pair_name,
             'status': 'SETUP',
             'direction': direction,
             'order_type': order_type,
-            'entry': entry_price,
-            'price': current_price,
-            'range': f"{opening_low:.5f} - {opening_high:.5f}",
             'score': score,
-            'max_score': 8,
-            'recommendation': 'TRADE' if score >= 5 else 'SKIP',
-            'sl': sl,
-            'tp1': tp1,
-            'tp2': tp2,
-            'tp3': tp3,
+            'recommendation': recommendation,
+            'calculations': calculations,
             'factors': factors
         }
 
@@ -442,98 +632,67 @@ def analyze_pair(df, pair_name):
 
 
 # ════════════════════════════════════════════════════════════════════════════════════
-# MAIN
+# MAIN EXECUTION
 # ════════════════════════════════════════════════════════════════════════════════════
 
 def main():
-    # CREATE LOG DIR AND CSV FIRST
     create_log_dir()
     initialize_csv()
 
-    print("🚀 ORB Analyzer - UPDATED VERSION")
-    print(f"📊 Pairs: {', '.join(PAIRS)}")
-    print(f"⏱️  Check every {CHECK_INTERVAL}s")
-    print(f"🔢 Runs: {MAX_ITERATIONS} times then stop")
-    print(f"✅ Scoring: 0-8 points")
-    print(f"🔐 API Key: From GitHub Secrets (Secure)")
-    print(f"📊 SL: Fixed 30 pips")
-    print(f"📝 Logging to: {LOG_FILE}")
+    print("🚀 ORB Analyzer - DYNAMIC RISK MANAGEMENT")
+    print(f"📊 Pairs: {len(PAIRS)} | 💰 Equity: ${ACCOUNT_EQUITY} | 🎛️  Leverage: 1:{ACCOUNT_LEVERAGE}")
 
-    iteration = 0
-
-    while iteration < MAX_ITERATIONS:
-        iteration += 1
-        print(f"\n{'='*80}")
-        print(f"🔄 Check #{iteration}/{MAX_ITERATIONS} - {datetime.now().strftime('%H:%M:%S')}")
-        print('='*80)
+    for iteration in range(1, MAX_ITERATIONS + 1):
+        print(f"\n{'='*60}")
+        print(f"🔄 Check #{iteration} - {datetime.now().strftime('%H:%M:%S')}")
+        print('='*60)
 
         for pair in PAIRS:
-            print(f"\n📈 {pair}")
             df = get_twelvedata_candles(pair, API_KEY, TIMEFRAME)
 
             if df is None:
-                print("   ⚠️  No data")
-                time.sleep(1)
                 continue
 
             result = analyze_pair(df, pair)
 
             if result['status'] == 'NO_DATA':
-                print("   ⚠️  No data")
+                continue
             elif result['status'] == 'NO_BREAKOUT':
-                print(f"   Inside range: {result['range']}")
+                continue
+            elif result['status'] == 'NO_SCORE':
+                continue
             elif result['status'] == 'ERROR':
-                print(f"   ❌ {result['message']}")
+                print(f"❌ {pair}: {result.get('message', 'Unknown error')}")
             elif result['status'] == 'SETUP':
-                print(f"Direction: {result['direction']}")
-                print(f"Score: {result['score']}/{result['max_score']} → {result['recommendation']}")
-                print(f"├─ Recommendation: {result['order_type']}")
-                print(f"├─ Entry:")
-                print(f"{result['entry']:.4f}")
-                print(f"├─ SL:")
-                print(f"{result['sl']:.4f}")
-                print(f"├─ TP1:")
-                print(f"{result['tp1']:.4f}")
-                print(f"├─ TP2:")
-                print(f"{result['tp2']:.4f}")
-                print(f"└─ TP3:")
-                print(f"{result['tp3']:.4f}")
+                # Minimal console output
+                calc = result['calculations']
+                print(f"✓ {pair} {result['direction']} Score:{result['score']}/8 Lot:{calc['final_lot']:.2f} {result['recommendation']}")
 
-                if result['factors']:
-                    print(f"\nAll 8 Factors:")
-                    for k in sorted(result['factors'].keys()):
-                        print(f"   {result['factors'][k]}")
-
-                # LOG THE TRADE
+                # Log to CSV with all data
                 factors_str = " | ".join([f"{k}:{v}" for k, v in sorted(result['factors'].items())])
-                log_result(
-                    result['pair'],
+                log_enhanced_result(
+                    pair,
                     result['direction'],
                     result['score'],
-                    result['order_type'],
-                    result['entry'],
-                    result['sl'],
-                    result['tp1'],
-                    result['tp2'],
-                    result['tp3'],
+                    result['recommendation'],
+                    calc,
                     factors_str
                 )
 
-            time.sleep(1)
+            time.sleep(0.5)
 
-        print(f"\n{'='*80}")
+        print(f"\n{'='*60}")
         if iteration < MAX_ITERATIONS:
-            print(f"⏳ Next in {CHECK_INTERVAL}s (Check {iteration}/{MAX_ITERATIONS})")
+            print(f"⏳ Next check in {CHECK_INTERVAL}s...")
             try:
                 time.sleep(CHECK_INTERVAL)
             except KeyboardInterrupt:
-                print("\n🛑 Stopped by user")
+                print("\n🛑 Stopped")
                 break
         else:
-            print(f"✅ Completed {MAX_ITERATIONS} checks. Stopping.")
-            break
+            print(f"✅ Completed {MAX_ITERATIONS} check(s)")
 
-    print(f"✅ CSV file saved: {LOG_FILE}")
+    print(f"📁 Log saved: {LOG_FILE}")
 
 
 if __name__ == "__main__":
