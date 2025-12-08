@@ -632,7 +632,7 @@ def analyze_pair(df, pair_name):
 
 
 # ════════════════════════════════════════════════════════════════════════════════════
-# MAIN EXECUTION
+# MAIN EXECUTION - UPDATED OUTPUT FORMAT
 # ════════════════════════════════════════════════════════════════════════════════════
 
 def main():
@@ -643,9 +643,9 @@ def main():
     print(f"📊 Pairs: {len(PAIRS)} | 💰 Equity: ${ACCOUNT_EQUITY} | 🎛️  Leverage: 1:{ACCOUNT_LEVERAGE}")
 
     for iteration in range(1, MAX_ITERATIONS + 1):
-        print(f"\n{'='*60}")
+        print(f"\n{'='*70}")
         print(f"🔄 Check #{iteration} - {datetime.now().strftime('%H:%M:%S')}")
-        print('='*60)
+        print('='*70)
 
         for pair in PAIRS:
             df = get_twelvedata_candles(pair, API_KEY, TIMEFRAME)
@@ -654,6 +654,10 @@ def main():
                 continue
 
             result = analyze_pair(df, pair)
+
+            # ─────────────────────────────────────────────────────────────────────
+            # UPDATED OUTPUT FORMATTING
+            # ─────────────────────────────────────────────────────────────────────
 
             if result['status'] == 'NO_DATA':
                 continue
@@ -664,24 +668,45 @@ def main():
             elif result['status'] == 'ERROR':
                 print(f"❌ {pair}: {result.get('message', 'Unknown error')}")
             elif result['status'] == 'SETUP':
-                # Minimal console output
                 calc = result['calculations']
-                print(f"✓ {pair} {result['direction']} Score:{result['score']}/8 Lot:{calc['final_lot']:.2f} {result['recommendation']}")
+                candle_count = len(df)
+                direction = result['direction']
+                score = result['score']
+                recommendation = result['recommendation']
 
-                # Log to CSV with all data
+                # Print pair header with candle count
+                print(f"\n📈 {pair} ✓ {candle_count} candles")
+
+                # Print score and recommendation
+                if recommendation == 'TRADE':
+                    # TRADE RECOMMENDATION - Show all details
+                    order_type = "Buy Limit" if direction == "LONG" else "Sell Limit"
+                    print(f"Score: {score}/8 → {recommendation}    Recommendation: **{order_type}**")
+                    print(f"Lot size: {calc['final_lot']:.2f}")
+                    print(f"Entry:")
+                    print(f"    {calc['entry']:.4f}")
+                    print(f"SL:")
+                    print(f"    {calc['sl']:.4f}")
+                    print(f"TP:")
+                    print(f"    {calc['tp']:.4f}")
+                else:
+                    # SKIP RECOMMENDATION - Show only score and skip status
+                    print(f"Score: {score}/8 → {recommendation}")
+
+                # Log to CSV with all data (always log for analysis)
                 factors_str = " | ".join([f"{k}:{v}" for k, v in sorted(result['factors'].items())])
                 log_enhanced_result(
                     pair,
-                    result['direction'],
-                    result['score'],
-                    result['recommendation'],
+                    direction,
+                    score,
+                    recommendation,
                     calc,
                     factors_str
                 )
 
             time.sleep(0.5)
 
-        print(f"\n{'='*60}")
+        print(f"\n{'='*70}")
         if iteration < MAX_ITERATIONS:
             print(f"⏳ Next check in {CHECK_INTERVAL}s...")
             try:
@@ -692,7 +717,7 @@ def main():
         else:
             print(f"✅ Completed {MAX_ITERATIONS} check(s)")
 
-    print(f"📁 Log saved: {LOG_FILE}")
+    print(f"\n📁 Log saved: {LOG_FILE}")
 
 
 if __name__ == "__main__":
