@@ -172,12 +172,12 @@ def calculate_risk_percentage(score):
     """Calculate risk % based on score: 2% to 3%"""
     if score <= 0:
         return None
-    return 2.0 + (score * 0.125)
+    return 3.0 + (score * 0.125)   # (increase base risk from 2.0 to 3.0) 2.0 + (score * 0.125)
 
 
 def calculate_rr_ratio(score):
     """Calculate Risk:Reward ratio based on score: 1:1 to 2.5:1"""
-    return 1.0 + (score * 0.1875)
+    return 1.0 + (score * 0.25)   # (increase factor from 0.1875 to 0.25) 1.0 + (score * 0.1875)
 
 
 def calculate_sl_distance(atr, score, pip_min):
@@ -198,7 +198,7 @@ def calculate_sl_distance(atr, score, pip_min):
         return None
 
     # ATR multiplier increases with score: 1.0x to 2.0x
-    sl_multiplier = 1.0 + (0.25 * score / 8)
+    sl_multiplier = 1.0 + (0.50 * score / 8)    # (increase from 0.25 to 0.50) 1.0 + (0.25 * score / 8)
     
     # Convert ATR (price) to pips
     atr_pips = atr / pip_min
@@ -641,7 +641,7 @@ def analyze_pair(df, pair_name):
         adjusted_lot = adjust_lot_for_score(base_lot, score)
 
         # 7. Apply constraints and round
-        adjusted_lot = max(0.01, min(2.0, adjusted_lot))
+        adjusted_lot = max(0.01, min(1.0, adjusted_lot))   # (lower max lot from 2.0 to 1.0) max(0.01, min(2.0, adjusted_lot))
         adjusted_lot = round_down_lot(adjusted_lot, 0.01)
 
         # 8. Margin safety check
