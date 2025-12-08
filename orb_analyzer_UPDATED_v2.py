@@ -737,7 +737,7 @@ def main():
                 continue
 
             result = analyze_pair(df, pair)
-            print(pair, '→', result['status'])
+            #print(pair, '→', result['status'])
 
             if result['status'] == 'NO_DATA':
                 continue
