@@ -24,7 +24,7 @@ API_KEY = os.getenv('TWELVEDATA_API_KEY', 'ALPHA')
 BASE_URL = "https://api.twelvedata.com"
 
 # Updated pairs: Added USD/CHF and AUD/USD
-PAIRS = ["EUR/USD", "GBP/USD", "USD/JPY", "USD/CAD", "EUR/GBP", "XAU/USD", "AUD/USD"]
+PAIRS = ["EUR/USD", "GBP/USD", "USD/JPY", "USD/CAD", "EUR/GBP", "XAU/USD","USD/CHF", "AUD/USD"]
 
 # Pair configuration with pip values and decimal precision
 PIP_VALUES = {
@@ -34,6 +34,7 @@ PIP_VALUES = {
     "USD/CAD": {"pip_value": 10, "decimals": 4, "pip_min": 0.0001, "margin_req": 1000},
     "EUR/GBP": {"pip_value": 10, "decimals": 4, "pip_min": 0.0001, "margin_req": 1000},
     "XAU/USD": {"pip_value": 10, "decimals": 4, "pip_min": 0.0001, "margin_req": 5000},
+    "USD/CHF": {"pip_value": 10, "decimals": 4, "pip_min": 0.0001, "margin_req": 1000},
     "AUD/USD": {"pip_value": 10, "decimals": 4, "pip_min": 0.0001, "margin_req": 1000},
 }
 
@@ -656,6 +657,8 @@ def main():
                 continue
 
             result = analyze_pair(df, pair)
+            print(pair, '→', result['status'])
+
 
             # ─────────────────────────────────────────────────────────────────────
             # UPDATED OUTPUT FORMATTING
