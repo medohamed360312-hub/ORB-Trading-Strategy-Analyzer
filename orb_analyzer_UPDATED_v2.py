@@ -1,11 +1,17 @@
 #!/usr/bin/env python3
 """
-FOREX ORB STRATEGY - DYNAMIC RISK MANAGEMENT VERSION
+FOREX ORB STRATEGY - DYNAMIC RISK MANAGEMENT VERSION (FIXED)
 TwelveData - Real-time data
 All 8 factors: Breakout, RSI, MACD, EMA, Momentum, Volume, FVG, Support/Resistance
 Dynamic: Risk%, SL, TP, Lot sizing based on 8-factor score
 Score-based: Higher confidence = Higher risk/reward
 API Key from GitHub Secrets (Secure)
+
+FIXES APPLIED:
+✅ SL/TP calculated in proper price units (not mega-pips)
+✅ Entry ≠ SL ≠ TP validation
+✅ Lot size proportional to actual SL distance
+✅ Negative SL elimination
 """
 
 import requests
@@ -30,10 +36,10 @@ PAIRS = ["EUR/USD", "GBP/USD", "USD/JPY", "USD/CAD", "EUR/GBP", "XAU/USD","USD/C
 PIP_VALUES = {
     "EUR/USD": {"pip_value": 10, "decimals": 4, "pip_min": 0.0001, "margin_req": 1000},
     "GBP/USD": {"pip_value": 10, "decimals": 4, "pip_min": 0.0001, "margin_req": 1000},
-    "USD/JPY": {"pip_value": 0.09, "decimals": 4, "pip_min": 0.01, "margin_req": 1000},
+    "USD/JPY": {"pip_value": 0.09, "decimals": 2, "pip_min": 0.01, "margin_req": 1000},
     "USD/CAD": {"pip_value": 10, "decimals": 4, "pip_min": 0.0001, "margin_req": 1000},
     "EUR/GBP": {"pip_value": 10, "decimals": 4, "pip_min": 0.0001, "margin_req": 1000},
-    "XAU/USD": {"pip_value": 10, "decimals": 4, "pip_min": 0.0001, "margin_req": 5000},
+    "XAU/USD": {"pip_value": 10, "decimals": 4, "pip_min": 0.01, "margin_req": 5000},
     "USD/CHF": {"pip_value": 10, "decimals": 4, "pip_min": 0.0001, "margin_req": 1000},
     "AUD/USD": {"pip_value": 10, "decimals": 4, "pip_min": 0.0001, "margin_req": 1000},
 }
@@ -66,7 +72,7 @@ def initialize_csv():
         df = pd.DataFrame(columns=[
             'Date', 'Time', 'Pair', 'Direction', 'Score', 'Recommendation',
             'Entry', 'SL', 'TP',
-            'ATR', 'SL_Multiplier', 'SL_Distance', 'SL_Pips',
+            'ATR', 'SL_Multiplier', 'SL_Distance_Pips', 'SL_Distance_Price',
             'Risk%', 'Risk_Amount$', 'RR_Ratio', 'TP_Distance', 'TP_Pips',
             'Base_Lot', 'Adjusted_Lot', 'Final_Lot',
             'Margin_Used$', 'Margin_Util%',
@@ -174,14 +180,33 @@ def calculate_rr_ratio(score):
     return 1.0 + (score * 0.1875)
 
 
-def calculate_sl_distance(atr, score):
-    """Calculate SL distance based on ATR and score"""
-    if atr is None or score <= 0:
+def calculate_sl_distance(atr, score, pip_min):
+    """
+    Calculate SL distance in PIPS based on ATR and score.
+    
+    ✅ FIXED: Returns PIPS, not price distance
+    
+    Args:
+        atr (float): Average True Range (in price units)
+        score (int): Confluence score (1-8)
+        pip_min (float): Minimum pip increment for pair
+    
+    Returns:
+        tuple: (sl_distance_pips, sl_multiplier) or None
+    """
+    if atr is None or score <= 0 or pip_min <= 0:
         return None
 
+    # ATR multiplier increases with score: 1.0x to 2.0x
     sl_multiplier = 1.0 + (0.25 * score / 8)
-    sl_distance = atr * sl_multiplier
-    return sl_distance, sl_multiplier
+    
+    # Convert ATR (price) to pips
+    atr_pips = atr / pip_min
+    
+    # SL distance in pips
+    sl_distance_pips = atr_pips * sl_multiplier
+    
+    return sl_distance_pips, sl_multiplier
 
 
 def convert_to_pips(distance, pip_min):
@@ -234,24 +259,47 @@ def check_margin_safety(lot, entry_price, leverage, equity, max_util=0.5):
 
 
 def recalculate_effective_pips(risk_amount, final_lot, pip_value, pip_min):
-    """Recalculate effective SL distance (price) and pips based on final lot"""
+    """
+    Recalculate effective SL distance in PRICE UNITS based on final lot size.
+    
+    This ensures the SL distance matches what the lot can actually afford to lose.
+    
+    Args:
+        risk_amount (float): Max loss in currency ($)
+        final_lot (float): Final lot size (0.01 - 2.0)
+        pip_value (float): Value per pip in currency
+        pip_min (float): Smallest pip increment (0.0001 for majors, 0.01 for JPY)
+    
+    Returns:
+        tuple: (sl_distance_in_price, sl_pips)
+    """
     try:
         if final_lot <= 0 or pip_value <= 0 or pip_min <= 0:
             return 0, 0
 
-        # How many pips can we afford with this final lot size?
+        # Calculate how many pips we can afford with this final lot
+        # Formula: Risk ($) = Pips × Lot Size × Pip Value ($)
+        # Therefore: Pips = Risk ($) / (Lot Size × Pip Value ($))
         final_sl_pips = risk_amount / (final_lot * pip_value)
+        
+        if final_sl_pips <= 0:
+            return 0, 0
 
-        # Convert pips back into a PRICE distance
+        # Convert pips to PRICE distance
+        # Price distance = Pips × Minimum Pip Increment
         final_sl_distance = final_sl_pips * pip_min
 
         return final_sl_distance, final_sl_pips
     except:
         return 0, 0
 
+
 def calculate_sl_tp(entry, sl_distance, rr_ratio, direction):
     """Calculate SL and TP prices"""
     try:
+        if sl_distance <= 0:
+            return None, None
+        
         if direction == "LONG":
             sl = entry - sl_distance
             tp = entry + (sl_distance * rr_ratio)
@@ -262,6 +310,36 @@ def calculate_sl_tp(entry, sl_distance, rr_ratio, direction):
         return sl, tp
     except:
         return None, None
+
+
+def validate_sl_tp(entry, sl, tp, direction):
+    """
+    ✅ NEW: Validate SL and TP are in correct positions relative to entry.
+    
+    Returns:
+        tuple: (is_valid, error_message)
+    """
+    try:
+        # Check for negative prices
+        if entry <= 0 or sl <= 0 or tp <= 0:
+            return False, "Negative or zero price detected"
+        
+        # Check for identical values (within 0.00001)
+        if abs(entry - sl) < 0.00001 or abs(entry - tp) < 0.00001 or abs(sl - tp) < 0.00001:
+            return False, "Entry, SL, and TP must be distinct"
+        
+        # Check direction logic
+        if direction == "LONG":
+            if sl >= entry or tp <= entry:
+                return False, f"LONG: SL ({sl:.4f}) must be < Entry ({entry:.4f}) < TP ({tp:.4f})"
+        else:  # SHORT
+            if sl <= entry or tp >= entry:
+                return False, f"SHORT: TP ({tp:.4f}) must be < Entry ({entry:.4f}) < SL ({sl:.4f})"
+        
+        return True, ""
+    
+    except:
+        return False, "Validation error"
 
 
 # ════════════════════════════════════════════════════════════════════════════════════
@@ -396,8 +474,8 @@ def log_enhanced_result(pair, direction, score, recommendation, calculations, fa
             'TP': f"{calculations['tp']:.4f}",
             'ATR': f"{calculations['atr']:.6f}",
             'SL_Multiplier': f"{calculations['sl_multiplier']:.4f}",
-            'SL_Distance': f"{calculations['sl_distance']:.6f}",
-            'SL_Pips': f"{calculations['sl_pips']:.2f}",
+            'SL_Distance_Pips': f"{calculations['sl_pips']:.2f}",
+            'SL_Distance_Price': f"{calculations['sl_distance']:.6f}",
             'Risk%': f"{calculations['risk_pct']:.3f}%",
             'Risk_Amount$': f"{calculations['risk_amount']:.2f}",
             'RR_Ratio': f"{calculations['rr_ratio']:.2f}:1",
@@ -549,39 +627,36 @@ def analyze_pair(df, pair_name):
         # 3. Calculate R:R ratio
         rr_ratio = calculate_rr_ratio(score)
 
-        # 4. Calculate SL distance and multiplier
-        sl_result = calculate_sl_distance(atr, score)
+        # 4. Calculate SL distance in PIPS (✅ FIXED)
+        sl_result = calculate_sl_distance(atr, score, pair_config['pip_min'])
         if sl_result is None:
             return {'pair': pair_name, 'status': 'ERROR', 'message': 'ATR calc failed'}
 
-        sl_distance, sl_multiplier = sl_result
+        sl_distance_pips, sl_multiplier = sl_result
 
-        # 5. Convert to pips
-        sl_pips_initial = convert_to_pips(sl_distance, pair_config['pip_min'])
+        # 5. Calculate base lot using pips
+        base_lot = calculate_base_lot(risk_amount, sl_distance_pips, pair_config['pip_value'])
 
-        # 6. Calculate base lot
-        base_lot = calculate_base_lot(risk_amount, sl_pips_initial, pair_config['pip_value'])
-
-        # 7. Adjust for score
+        # 6. Adjust for score
         adjusted_lot = adjust_lot_for_score(base_lot, score)
 
-        # 8. Apply constraints and round
-        adjusted_lot = max(0.01, min(2.0, adjusted_lot))  # Min 0.01, Max 2.0
+        # 7. Apply constraints and round
+        adjusted_lot = max(0.01, min(2.0, adjusted_lot))
         adjusted_lot = round_down_lot(adjusted_lot, 0.01)
 
-        # 9. Margin safety check
+        # 8. Margin safety check
         final_lot, margin_util_pct, margin_used = check_margin_safety(
             adjusted_lot, entry_price, ACCOUNT_LEVERAGE, ACCOUNT_EQUITY, MAX_MARGIN_UTILIZATION
         )
         final_lot = round_down_lot(final_lot, 0.01)
 
-        # 10. Recalculate effective pips based on final lot
-        final_sl_distance, final_sl_pips = recalculate_effective_pips(
+        # 9. Recalculate effective SL distance in PRICE units based on final lot
+        final_sl_distance_price, final_sl_pips = recalculate_effective_pips(
             risk_amount, final_lot, pair_config['pip_value'], pair_config['pip_min']
         )
 
-        # 11. Calculate SL and TP prices
-        sl, tp = calculate_sl_tp(entry_price, final_sl_distance, rr_ratio, direction)
+        # 10. Calculate SL and TP prices
+        sl, tp = calculate_sl_tp(entry_price, final_sl_distance_price, rr_ratio, direction)
 
         if sl is None or tp is None:
             return {'pair': pair_name, 'status': 'ERROR', 'message': 'SL/TP calc failed'}
@@ -590,6 +665,11 @@ def analyze_pair(df, pair_name):
         decimals = pair_config['decimals']
         sl = round(sl, decimals)
         tp = round(tp, decimals)
+
+        # ✅ NEW: Validate SL/TP before proceeding
+        is_valid, error_msg = validate_sl_tp(entry_price, sl, tp, direction)
+        if not is_valid:
+            return {'pair': pair_name, 'status': 'INVALID_SETUP', 'message': error_msg}
 
         # Calculate TP pips
         tp_distance = abs(tp - entry_price)
@@ -602,7 +682,7 @@ def analyze_pair(df, pair_name):
             'tp': tp,
             'atr': atr if atr is not None else 0,
             'sl_multiplier': sl_multiplier,
-            'sl_distance': final_sl_distance,
+            'sl_distance': final_sl_distance_price,
             'sl_pips': final_sl_pips,
             'risk_pct': risk_pct,
             'risk_amount': risk_amount,
@@ -635,7 +715,7 @@ def analyze_pair(df, pair_name):
 
 
 # ════════════════════════════════════════════════════════════════════════════════════
-# MAIN EXECUTION - UPDATED OUTPUT FORMAT
+# MAIN EXECUTION
 # ════════════════════════════════════════════════════════════════════════════════════
 
 def main():
@@ -659,11 +739,6 @@ def main():
             result = analyze_pair(df, pair)
             print(pair, '→', result['status'])
 
-
-            # ─────────────────────────────────────────────────────────────────────
-            # UPDATED OUTPUT FORMATTING
-            # ─────────────────────────────────────────────────────────────────────
-
             if result['status'] == 'NO_DATA':
                 continue
             elif result['status'] == 'NO_BREAKOUT':
@@ -672,6 +747,8 @@ def main():
                 continue
             elif result['status'] == 'ERROR':
                 print(f"❌ {pair}: {result.get('message', 'Unknown error')}")
+            elif result['status'] == 'INVALID_SETUP':
+                print(f"⚠️  {pair}: Invalid setup - {result.get('message', 'Unknown error')}")
             elif result['status'] == 'SETUP':
                 calc = result['calculations']
                 candle_count = len(df)
@@ -686,7 +763,7 @@ def main():
                 if recommendation == 'TRADE':
                     # TRADE RECOMMENDATION - Show all details
                     order_type = "Buy Limit" if direction == "LONG" else "Sell Limit"
-                    print(f"Score: {score}/8 → {recommendation}    Recommendation: **{order_type}**")
+                    print(f"Score: {score}/8 → {recommendation} Recom: **{order_type}**")
                     print(f"Lot size: {calc['final_lot']:.2f}")
                     print(f"Entry:")
                     print(f"    {calc['entry']:.4f}")
@@ -694,11 +771,14 @@ def main():
                     print(f"    {calc['sl']:.4f}")
                     print(f"TP:")
                     print(f"    {calc['tp']:.4f}")
+                    expected_profit = calc['risk_amount'] * calc['rr_ratio']
+                    #print(f"Risk/Reward:")
+                    print(f"Risk/Reward:{calc['rr_ratio']:.2f}:1 |Risk:${calc['risk_amount']:.2f}|Profit:${expected_profit:.2f}")
                 else:
                     # SKIP RECOMMENDATION - Show only score and skip status
                     print(f"Score: {score}/8 → {recommendation}")
 
-                # Log to CSV with all data (always log for analysis)
+                # Log to CSV with all data
                 factors_str = " | ".join([f"{k}:{v}" for k, v in sorted(result['factors'].items())])
                 log_enhanced_result(
                     pair,
