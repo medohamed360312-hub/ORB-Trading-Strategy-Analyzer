@@ -24,7 +24,7 @@ API_KEY = os.getenv('TWELVEDATA_API_KEY', 'ALPHA')
 BASE_URL = "https://api.twelvedata.com"
 
 # Updated pairs: Added USD/CHF and AUD/USD
-PAIRS = ["EUR/USD", "GBP/USD", "USD/JPY", "USD/CAD", "EUR/GBP", "XAU/USD", "USD/CHF", "AUD/USD"]
+PAIRS = ["EUR/USD", "GBP/USD", "USD/JPY", "USD/CAD", "EUR/GBP", "XAU/USD", "AUD/USD"]
 
 # Pair configuration with pip values and decimal precision
 PIP_VALUES = {
@@ -34,7 +34,6 @@ PIP_VALUES = {
     "USD/CAD": {"pip_value": 10, "decimals": 4, "pip_min": 0.0001, "margin_req": 1000},
     "EUR/GBP": {"pip_value": 10, "decimals": 4, "pip_min": 0.0001, "margin_req": 1000},
     "XAU/USD": {"pip_value": 10, "decimals": 4, "pip_min": 0.0001, "margin_req": 5000},
-    "USD/CHF": {"pip_value": 10, "decimals": 4, "pip_min": 0.0001, "margin_req": 1000},
     "AUD/USD": {"pip_value": 10, "decimals": 4, "pip_min": 0.0001, "margin_req": 1000},
 }
 
@@ -234,17 +233,20 @@ def check_margin_safety(lot, entry_price, leverage, equity, max_util=0.5):
 
 
 def recalculate_effective_pips(risk_amount, final_lot, pip_value, pip_min):
-    """Recalculate effective pips based on final lot"""
+    """Recalculate effective SL distance (price) and pips based on final lot"""
     try:
-        if final_lot <= 0 or pip_value <= 0:
-            return 0
+        if final_lot <= 0 or pip_value <= 0 or pip_min <= 0:
+            return 0, 0
 
-        final_sl_distance = risk_amount / (final_lot * pip_value)
-        final_sl_pips = final_sl_distance / pip_min
+        # How many pips can we afford with this final lot size?
+        final_sl_pips = risk_amount / (final_lot * pip_value)
+
+        # Convert pips back into a PRICE distance
+        final_sl_distance = final_sl_pips * pip_min
+
         return final_sl_distance, final_sl_pips
     except:
         return 0, 0
-
 
 def calculate_sl_tp(entry, sl_distance, rr_ratio, direction):
     """Calculate SL and TP prices"""
