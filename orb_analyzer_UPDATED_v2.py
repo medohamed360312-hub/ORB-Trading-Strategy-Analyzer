@@ -490,7 +490,7 @@ def main():
                 #print(f"Direction: {result['direction']}")
                if result['recommendation'] == "SKIP":
                     print("⏭️ Recommendation: SKIP")
-                else:
+               else:
                     print(f"Score: {result['score']}/{result['max_score']} → {result['recommendation']}")
                     # ANSI escape codes for formatting
                     BOLD = "\033[1m"
