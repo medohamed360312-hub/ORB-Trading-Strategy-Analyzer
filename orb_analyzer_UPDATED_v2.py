@@ -501,12 +501,12 @@ def main():
                 #print(f"{result['tp2']:.4f}")
                 #print(f"└─ TP3:")
                 #print(f"{result['tp3']:.4f}")
-
+                """
                 if result['factors']:
                     print(f"\nAll 8 Factors:")
                     for k in sorted(result['factors'].keys()):
                         print(f"   {result['factors'][k]}")
-
+                """
                 # LOG THE TRADE
                 factors_str = " | ".join([f"{k}:{v}" for k, v in sorted(result['factors'].items())])
                 log_result(
