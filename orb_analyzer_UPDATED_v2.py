@@ -127,7 +127,7 @@ def get_twelvedata_candles(pair, api_key, interval="5min", count=50):
 
         df = pd.DataFrame(records)
         df = df.iloc[::-1].reset_index(drop=True)
-        print(f" ✓ {len(df)} candles")
+        #print(f" ✓ {len(df)} candles")
         return df
 
     except Exception as e:
