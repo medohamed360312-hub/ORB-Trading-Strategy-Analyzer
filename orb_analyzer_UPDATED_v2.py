@@ -487,10 +487,9 @@ def main():
             elif result['status'] == 'ERROR':
                 print(f"   ❌ {result['message']}")
             elif result['status'] == 'SETUP':
-                #print(f"Direction: {result['direction']}")
-               if result['recommendation'] == "SKIP":
-                    print("⏭️ Recommendation: SKIP")
-               else:
+                if result['recommendation'] == "SKIP":
+                    print(" ⏭️ Recommendation: SKIP")
+                else:
                     print(f"Score: {result['score']}/{result['max_score']} → {result['recommendation']}")
                     # ANSI escape codes for formatting
                     BOLD = "\033[1m"
