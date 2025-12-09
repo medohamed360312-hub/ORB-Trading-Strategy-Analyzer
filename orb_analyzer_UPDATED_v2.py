@@ -83,7 +83,7 @@ def get_twelvedata_candles(pair, api_key, interval="5min", count=50):
             "format": "JSON"
         }
 
-        print(f"   📡 {pair}...", end="", flush=True)
+        #print(f"   📡 {pair}...", end="", flush=True)
         response = requests.get(url, params=params, timeout=10)
 
         if response.status_code != 200:
@@ -285,7 +285,7 @@ def log_result(pair, direction, score, order_type, entry, sl, tp1, tp2, tp3, fac
         # Save back
         df.to_csv(LOG_FILE, index=False)
 
-        print(f"   📝 Logged: {pair} {direction} Score:{score}")
+        #print(f"   📝 Logged: {pair} {direction} Score:{score}")
         return True
 
     except Exception as e:
@@ -488,19 +488,23 @@ def main():
                 print(f"   ❌ {result['message']}")
             elif result['status'] == 'SETUP':
                 #print(f"Direction: {result['direction']}")
-                print(f"Score: {result['score']}/{result['max_score']} → {result['recommendation']}")
-                
-                print(f"├─ Recommendation: {result['order_type']}")
-                print(f"├─ Entry:")
-                print(f"{result['entry']:.4f}")
-                print(f"├─ SL:")
-                print(f"{result['sl']:.4f}")
-                print(f"├─ TP1:")
-                print(f"{result['tp1']:.4f}")
-                #print(f"├─ TP2:")
-                #print(f"{result['tp2']:.4f}")
-                #print(f"└─ TP3:")
-                #print(f"{result['tp3']:.4f}")
+               if result['recommendation'] == "SKIP":
+                    print("⏭️ Recommendation: SKIP")
+                else:
+                    print(f"Score: {result['score']}/{result['max_score']} → {result['recommendation']}")
+                    # ANSI escape codes for formatting
+                    BOLD = "\033[1m"
+                    RESET = "\033[0m"
+                    BIG = "\033[1;37m"  # bright white for emphasis
+                    # Bold + emphasized order_type
+                    print(f"├─ Recommendation: {BOLD}{BIG}{result['order_type']}{RESET}")
+                    
+                    print(f"├─ Entry:")
+                    print(f"{result['entry']:.4f}")
+                    print(f"├─ SL:")
+                    print(f"{result['sl']:.4f}")
+                    print(f"├─ TP1:")
+                    print(f"{result['tp1']:.4f}")
                 """
                 if result['factors']:
                     print(f"\nAll 8 Factors:")
