@@ -719,7 +719,9 @@ def main():
                         result['lot_size'],
                         result['risk_amount'],
                         result['profit_tp1'],
-                        factors_str
+                        factors_str,
+                        upload_to_gdrive=USE_GDRIVE,
+                        drive_filename=GDRIVE_FILENAME
                     )
 
             time.sleep(1)
