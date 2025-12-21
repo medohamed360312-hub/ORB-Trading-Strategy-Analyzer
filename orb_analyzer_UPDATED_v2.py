@@ -378,10 +378,13 @@ def calculate_sl_tp(entry_price, direction, pair_type, lot_size, score):
     
     return sl, tp1, tp2, tp3, sl_pips, tp1_pips, tp2_pips, tp3_pips
 
-
-def log_result(pair, direction, score, order_type, entry, sl, tp1, tp2, tp3,
-               sl_pips, tp1_pips, tp2_pips, tp3_pips, lot_size, risk_amount, profit_tp1, factors_str):
-    """Log trade result to CSV file with all new metrics"""
+def log_result_with_gdrive(pair, direction, score, order_type, entry, sl, tp1, tp2, tp3,
+                           sl_pips, tp1_pips, tp2_pips, tp3_pips, lot_size, risk_amount, 
+                           profit_tp1, factors_str, upload_to_gdrive=False, drive_filename=None):
+    """
+    Log trade result to CSV file with Google Drive upload capability
+    NEW ENTRIES APPEAR AT TOP (after header)
+    """
     try:
         today = datetime.now().strftime("%Y-%m-%d")
         timestamp = datetime.now().strftime("%H:%M:%S")
@@ -396,46 +399,66 @@ def log_result(pair, direction, score, order_type, entry, sl, tp1, tp2, tp3,
         # Risk/Reward ratio
         rr_ratio = round(profit_tp1_amount / risk_amount, 2) if risk_amount > 0 else 0
 
-        log_entry = {
-            'Date': today,
-            'Time': timestamp,
-            'Pair': pair,
-            'Direction': direction,
-            'Score': score,
-            'Recommendation': order_type if score >= 5 else 'SKIP',
-            'Lot': f"{lot_size:.2f}",
-            'Entry': f"{entry:.4f}",
-            'SL': f"{sl:.4f}",
-            'SL_Pips': f"{sl_pips:.1f}",
-            'TP1': f"{tp1:.4f}",
-            'TP1_Pips': f"{tp1_pips:.1f}",
-            'TP2': f"{tp2:.4f}",
-            'TP2_Pips': f"{tp2_pips:.1f}",
-            'TP3': f"{tp3:.4f}",
-            'TP3_Pips': f"{tp3_pips:.1f}",
-            'Risk_$': f"{risk_amount:.2f}",
-            'Reward_TP1_$': f"{profit_tp1_amount:.2f}",
-            'Reward_TP2_$': f"{profit_tp2_amount:.2f}",
-            'RiskReward_Ratio': f"1:{rr_ratio:.2f}",
-            'Factors': factors_str
+        # Create new row as DataFrame
+        new_row_data = {
+            'Date': [today],
+            'Time': [timestamp],
+            'Pair': [pair],
+            'Direction': [direction],
+            'Score': [score],
+            'Recommendation': [order_type if score >= 5 else 'SKIP'],
+            'Lot': [f"{lot_size:.2f}"],
+            'Entry': [f"{entry:.4f}"],
+            'SL': [f"{sl:.4f}"],
+            'SL_Pips': [f"{sl_pips:.1f}"],
+            'TP1': [f"{tp1:.4f}"],
+            'TP1_Pips': [f"{tp1_pips:.1f}"],
+            'TP2': [f"{tp2:.4f}"],
+            'TP2_Pips': [f"{tp2_pips:.1f}"],
+            'TP3': [f"{tp3:.4f}"],
+            'TP3_Pips': [f"{tp3_pips:.1f}"],
+            'Risk_$': [f"{risk_amount:.2f}"],
+            'Reward_TP1_$': [f"{profit_tp1_amount:.2f}"],
+            'Reward_TP2_$': [f"{profit_tp2_amount:.2f}"],
+            'RiskReward_Ratio': [f"1:{rr_ratio:.2f}"],
+            'Factors': [factors_str]
         }
-
+        
+        new_row_df = pd.DataFrame(new_row_data)
+        
         # Read existing CSV
-        df = pd.read_csv(LOG_FILE)
-
-        # Add new row
-        new_row = pd.DataFrame([log_entry])
-        df = pd.concat([df, new_row], ignore_index=True)
-
-        # Save back
-        df.to_csv(LOG_FILE, index=False)
-
+        if os.path.exists(LOG_FILE):
+            existing_df = pd.read_csv(LOG_FILE)
+        else:
+            existing_df = pd.DataFrame()
+        
+        # ✅ PREPEND NEW ROW (new entries at TOP, after header)
+        if not existing_df.empty:
+            combined_df = pd.concat([new_row_df, existing_df], ignore_index=True)
+        else:
+            combined_df = new_row_df
+        
+        # Write back to local file
+        combined_df.to_csv(LOG_FILE, index=False)
+        print(f"   ✅ Logged to CSV (newest first): {LOG_FILE}")
+        
+        # Upload to Google Drive if enabled
+        if upload_to_gdrive and drive_filename:
+            try:
+                from google_drive_manager import GoogleDriveManager
+                drive_manager = GoogleDriveManager()
+                drive_manager.upload_csv(LOG_FILE, drive_filename)
+                print(f"   ✅ Uploaded to Google Drive: {drive_filename}")
+            except ImportError:
+                print(f"   ⚠️  Google Drive module not installed. Skipping upload.")
+            except Exception as e:
+                print(f"   ⚠️  Could not upload to Google Drive: {str(e)[:50]}")
+        
         return True
 
     except Exception as e:
         print(f"   ⚠️  Logging error: {str(e)[:40]}")
         return False
-
 
 # ════════════════════════════════════════════════════════════════════════════════════
 # ANALYSIS - ALL 8 FACTORS
