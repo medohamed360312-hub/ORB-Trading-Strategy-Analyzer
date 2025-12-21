@@ -702,7 +702,7 @@ def main():
                     
                     # LOG THE TRADE
                     factors_str = " | ".join([f"{k}:{v}" for k, v in sorted(result['factors'].items())])
-                    log_result(
+                    log_result_with_gdrive(
                         result['pair'],
                         result['direction'],
                         result['score'],
