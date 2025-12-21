@@ -629,6 +629,13 @@ def main():
     # CREATE LOG DIR AND CSV FIRST
     create_log_dir()
     initialize_csv()
+        
+    # Get Google Drive settings from environment variables
+    USE_GDRIVE = os.getenv('USE_GOOGLE_DRIVE', 'false').lower() == 'true'
+    GDRIVE_FILENAME = os.getenv('GDRIVE_CSV_FILENAME', 'orb_trading_log.csv')
+    
+    if USE_GDRIVE:
+        print(f"📤 Google Drive enabled: {GDRIVE_FILENAME}")
 
     print("🚀 ORB Analyzer - UPDATED WITH DYNAMIC LOT & PIP-BASED SL/TP")
     print(f"📊 Pairs: {', '.join(PAIRS)}")
