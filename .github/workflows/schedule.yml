@@ -17,21 +17,34 @@ jobs:
           python-version: '3.10'
       
       - run: pip install -r requirements.txt
+      - run: pip install -r requirements_gdrive.txt
       
       - run: mkdir -p trading_logs
       
-      # FIXED: Added 'python' command
-      - run: python orb_analyzer_UPDATED_v2.py
+      # CRITICAL: Set up Google Drive credentials for GitHub Actions
+      - name: Setup Google Drive Credentials
+        run: |
+          echo "${{ secrets.GOOGLE_DRIVE_CREDENTIALS }}" | base64 --decode > credentials.json
+        continue-on-error: true
+      
+      # Run the trading bot
+      - name: Run ORB Analyzer
+        run: python orb_strategy_updated_v2.py
         env:
           TWELVEDATA_API_KEY: ${{ secrets.TWELVEDATA_API_KEY }}
+          USE_GOOGLE_DRIVE: ${{ secrets.USE_GOOGLE_DRIVE || 'false' }}
+          GDRIVE_CSV_FILENAME: ${{ secrets.GDRIVE_CSV_FILENAME || 'orb_trading_log.csv' }}
+        continue-on-error: true
       
+      # Upload logs as artifact
       - uses: actions/upload-artifact@v4
         with:
           name: trading_logs
           path: trading_logs/
           retention-days: 30
-          
+        continue-on-error: true
 
+      # Commit logs to repository (backup)
       - name: Commit logs to repository
         run: |
           git config --local user.email "action@github.com"
