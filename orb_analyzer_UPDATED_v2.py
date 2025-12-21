@@ -4,7 +4,13 @@ FOREX ORB STRATEGY - COMPLETE VERSION WITH ALL 8 CONFLUENCE FACTORS
 TwelveData - Real-time data
 All 8 factors: Breakout, RSI, MACD, EMA, Momentum, Volume, FVG, Support/Resistance
 API Key from GitHub Secrets (Secure)
-Updated: SL pips is not fixed, New output format, Buy/Sell Limit recommendations
+
+UPDATED WITH:
+- Score-based dynamic lot sizing
+- Pair-type-specific risk/reward targets (Standard vs Gold)
+- Pip-based SL/TP calculations
+- Enhanced CSV logging with Risk($), Reward($), R/R Ratio, Pips
+- Phone-friendly console output
 """
 
 import requests
@@ -22,14 +28,57 @@ import os
 API_KEY = os.getenv('TWELVEDATA_API_KEY', 'ALPHA')
 BASE_URL = "https://api.twelvedata.com"
 
-#PAIRS = ["EUR/USD", "GBP/USD", "USD/JPY", "USD/CAD", "EUR/GBP", "XAU/USD"]
-# Updated pairs: Added USD/CHF and AUD/USD
-PAIRS = ["EUR/USD", "GBP/USD", "USD/JPY", "USD/CAD", "EUR/GBP", "XAU/USD","USD/CHF", "AUD/USD"]
+# Trading pairs and their characteristics
+PAIRS = ["EUR/USD", "GBP/USD", "USD/JPY", "USD/CAD", "EUR/GBP", "XAU/USD", "USD/CHF", "AUD/USD"]
+
+# Pair type mapping
+PAIR_TYPES = {
+    "EUR/USD": "standard",
+    "GBP/USD": "standard",
+    "USD/JPY": "jpy",
+    "USD/CAD": "standard",
+    "EUR/GBP": "standard",
+    "XAU/USD": "gold",
+    "USD/CHF": "standard",
+    "AUD/USD": "standard"
+}
+
+# Pip values per lot (standard forex)
+PIP_VALUES = {
+    "standard": 10,    # $10 per pip per 1 lot
+    "jpy": 10,         # $10 per pip per 1 lot (despite 0.01 move)
+    "gold": 1          # $1 per pip per 1 lot (0.01 move = 1 pip)
+}
+
+# ════════════════════════════════════════════════════════════════════════════════════
+# LOT SIZE AND RISK/REWARD CONFIGURATION
+# ════════════════════════════════════════════════════════════════════════════════════
+
+LOT_SIZES = {
+    "standard": {5: 0.15, 6: 0.25},  # Score 5/8 → 0.15, Score 6/8 → 0.25
+    "jpy": {5: 0.15, 6: 0.25},
+    "gold": {5: 0.75, 6: 1.25}       # Gold: 5x higher for same $ targets
+}
+
+# Risk/Reward targets by pair type
+RISK_REWARD = {
+    "standard": {
+        5: {"risk": 20, "profit_tp1": 10},
+        6: {"risk": 20, "profit_tp1": 20}
+    },
+    "jpy": {
+        5: {"risk": 20, "profit_tp1": 10},
+        6: {"risk": 20, "profit_tp1": 20}
+    },
+    "gold": {
+        5: {"risk": 50, "profit_tp1": 50},
+        6: {"risk": 50, "profit_tp1": 70}
+    }
+}
 
 TIMEFRAME = "5min"
 CHECK_INTERVAL = 300  # 5 minutes
 MAX_ITERATIONS = 1  # Stop after 1 check
-SL_PERCENTAGE = 0.005  # 0.5% of entry price
 
 # Log file configuration
 LOG_DIR = "trading_logs"
@@ -49,10 +98,11 @@ def create_log_dir():
 def initialize_csv():
     """Create empty CSV file if it doesn't exist"""
     if not os.path.isfile(LOG_FILE):
-        # Create header row with Date as first column
+        # Create header row with all columns
         df = pd.DataFrame(columns=[
-            'Date', 'Time', 'Pair', 'Direction', 'Score', 'Recommendation', 'Entry',
-            'SL', 'TP1', 'TP2', 'TP3', 'Factors'
+            'Date', 'Time', 'Pair', 'Direction', 'Score', 'Recommendation', 'Lot',
+            'Entry', 'SL', 'SL_Pips', 'TP1', 'TP1_Pips', 'TP2', 'TP2_Pips', 'TP3', 'TP3_Pips',
+            'Risk_$', 'Reward_TP1_$', 'Reward_TP2_$', 'RiskReward_Ratio', 'Factors'
         ])
         df.to_csv(LOG_FILE, index=False)
         print(f"✅ Created CSV file: {LOG_FILE}")
@@ -70,6 +120,37 @@ def safe_float(value):
         return 0.0
 
 
+def get_pair_type(pair):
+    """Get pair type (standard, jpy, gold)"""
+    return PAIR_TYPES.get(pair, "standard")
+
+
+def get_pip_value(pair_type):
+    """Get pip value for pair type"""
+    return PIP_VALUES.get(pair_type, 10)
+
+
+def get_lot_size(pair_type, score):
+    """Get lot size based on pair type and score"""
+    # Score can be 0-8, we check if score >= 5 or >= 6
+    if score >= 6:
+        return LOT_SIZES.get(pair_type, {}).get(6, 0.15)
+    elif score >= 5:
+        return LOT_SIZES.get(pair_type, {}).get(5, 0.15)
+    else:
+        return 0.0  # No trade
+
+
+def get_risk_reward(pair_type, score):
+    """Get risk/reward targets based on pair type and score"""
+    if score >= 6:
+        return RISK_REWARD.get(pair_type, {}).get(6, {"risk": 20, "profit_tp1": 20})
+    elif score >= 5:
+        return RISK_REWARD.get(pair_type, {}).get(5, {"risk": 20, "profit_tp1": 10})
+    else:
+        return {"risk": 0, "profit_tp1": 0}
+
+
 def get_twelvedata_candles(pair, api_key, interval="5min", count=50):
     """Get candles from TwelveData"""
     try:
@@ -83,7 +164,6 @@ def get_twelvedata_candles(pair, api_key, interval="5min", count=50):
             "format": "JSON"
         }
 
-        #print(f"   📡 {pair}...", end="", flush=True)
         response = requests.get(url, params=params, timeout=10)
 
         if response.status_code != 200:
@@ -127,7 +207,6 @@ def get_twelvedata_candles(pair, api_key, interval="5min", count=50):
 
         df = pd.DataFrame(records)
         df = df.iloc[::-1].reset_index(drop=True)
-        #print(f" ✓ {len(df)} candles")
         return df
 
     except Exception as e:
@@ -254,11 +333,68 @@ def check_support_resistance(closes, highs, lows, period=10):
         return False
 
 
-def log_result(pair, direction, score, order_type, entry, sl, tp1, tp2, tp3, factors_str):
-    """Log trade result to CSV file"""
+def calculate_sl_tp(entry_price, direction, pair_type, lot_size, score):
+    """
+    Calculate SL and TP levels based on pip calculations
+    Returns: sl, tp1, tp2, tp3, sl_pips, tp1_pips, tp2_pips, tp3_pips
+    """
+    # Get pip value and risk/reward targets
+    pip_value = get_pip_value(pair_type)
+    risk_reward = get_risk_reward(pair_type, score)
+    
+    risk_amount = risk_reward["risk"]
+    profit_tp1 = risk_reward["profit_tp1"]
+    
+    # Calculate pips needed for risk
+    sl_pips = round(risk_amount / (pip_value * lot_size), 1)
+    
+    # Calculate pips for TP levels
+    tp1_pips = round(profit_tp1 / (pip_value * lot_size), 1)
+    tp2_pips = round((profit_tp1 * 2) / (pip_value * lot_size), 1)
+    tp3_pips = round((profit_tp1 * 3) / (pip_value * lot_size), 1)
+    
+    # Convert pips to price levels based on pair type
+    if pair_type == "gold":
+        # Gold: 1 pip = 0.01 move
+        pip_multiplier = 0.01
+    else:
+        # Standard and JPY: check if JPY or standard
+        if pair_type == "jpy":
+            pip_multiplier = 0.01
+        else:
+            pip_multiplier = 0.0001
+    
+    # Calculate SL and TP prices
+    if direction == "LONG":
+        sl = round(entry_price - (sl_pips * pip_multiplier), 4)
+        tp1 = round(entry_price + (tp1_pips * pip_multiplier), 4)
+        tp2 = round(entry_price + (tp2_pips * pip_multiplier), 4)
+        tp3 = round(entry_price + (tp3_pips * pip_multiplier), 4)
+    else:  # SHORT
+        sl = round(entry_price + (sl_pips * pip_multiplier), 4)
+        tp1 = round(entry_price - (tp1_pips * pip_multiplier), 4)
+        tp2 = round(entry_price - (tp2_pips * pip_multiplier), 4)
+        tp3 = round(entry_price - (tp3_pips * pip_multiplier), 4)
+    
+    return sl, tp1, tp2, tp3, sl_pips, tp1_pips, tp2_pips, tp3_pips
+
+
+def log_result(pair, direction, score, order_type, entry, sl, tp1, tp2, tp3,
+               sl_pips, tp1_pips, tp2_pips, tp3_pips, lot_size, risk_amount, profit_tp1, factors_str):
+    """Log trade result to CSV file with all new metrics"""
     try:
         today = datetime.now().strftime("%Y-%m-%d")
         timestamp = datetime.now().strftime("%H:%M:%S")
+        
+        # Calculate actual profit amounts at each TP
+        pair_type = get_pair_type(pair)
+        pip_value = get_pip_value(pair_type)
+        
+        profit_tp1_amount = round(tp1_pips * pip_value * lot_size, 2)
+        profit_tp2_amount = round(tp2_pips * pip_value * lot_size, 2)
+        
+        # Risk/Reward ratio
+        rr_ratio = round(profit_tp1_amount / risk_amount, 2) if risk_amount > 0 else 0
 
         log_entry = {
             'Date': today,
@@ -267,11 +403,20 @@ def log_result(pair, direction, score, order_type, entry, sl, tp1, tp2, tp3, fac
             'Direction': direction,
             'Score': score,
             'Recommendation': order_type if score >= 5 else 'SKIP',
+            'Lot': f"{lot_size:.2f}",
             'Entry': f"{entry:.4f}",
             'SL': f"{sl:.4f}",
+            'SL_Pips': f"{sl_pips:.1f}",
             'TP1': f"{tp1:.4f}",
+            'TP1_Pips': f"{tp1_pips:.1f}",
             'TP2': f"{tp2:.4f}",
+            'TP2_Pips': f"{tp2_pips:.1f}",
             'TP3': f"{tp3:.4f}",
+            'TP3_Pips': f"{tp3_pips:.1f}",
+            'Risk_$': f"{risk_amount:.2f}",
+            'Reward_TP1_$': f"{profit_tp1_amount:.2f}",
+            'Reward_TP2_$': f"{profit_tp2_amount:.2f}",
+            'RiskReward_Ratio': f"1:{rr_ratio:.2f}",
             'Factors': factors_str
         }
 
@@ -285,7 +430,6 @@ def log_result(pair, direction, score, order_type, entry, sl, tp1, tp2, tp3, fac
         # Save back
         df.to_csv(LOG_FILE, index=False)
 
-        #print(f"   📝 Logged: {pair} {direction} Score:{score}")
         return True
 
     except Exception as e:
@@ -402,31 +546,35 @@ def analyze_pair(df, pair_name):
         else:
             factors['8_sr'] = "✗ Away S/R"
 
-        # Calculate Entry and TP prices (same as current price for entry)
-        entry_price = current_price
-
-        # Calculate SL and TP with FIXED 30 PIPS
-        if direction == "LONG":
-            sl_distance = round(entry_price * SL_PERCENTAGE, 4)
-            sl = round(entry_price - sl_distance, 4)
-            tp1 = round(entry_price + (sl_distance * 1), 4)
-            tp2 = round(entry_price + (sl_distance * 2), 4)
-            tp3 = round(entry_price + (sl_distance * 3), 4)
-            order_type = "Buy Limit"
+        # Get pair type and lot size
+        pair_type = get_pair_type(pair_name)
+        lot_size = get_lot_size(pair_type, score)
+        
+        # Calculate SL and TP with new pip-based system
+        if score >= 5 and lot_size > 0:
+            entry_price = current_price
+            sl, tp1, tp2, tp3, sl_pips, tp1_pips, tp2_pips, tp3_pips = calculate_sl_tp(
+                entry_price, direction, pair_type, lot_size, score
+            )
+            
+            # Get risk/reward amounts
+            risk_reward = get_risk_reward(pair_type, score)
+            risk_amount = risk_reward["risk"]
+            profit_tp1 = risk_reward["profit_tp1"]
+            
+            order_type = "Buy Limit" if direction == "LONG" else "Sell Limit"
         else:
-            sl_distance = round(entry_price * SL_PERCENTAGE, 4)
-            sl = round(entry_price + sl_distance, 4)
-            tp1 = round(entry_price - (sl_distance * 1), 4)
-            tp2 = round(entry_price - (sl_distance * 2), 4)
-            tp3 = round(entry_price - (sl_distance * 3), 4)
-            order_type = "Sell Limit"
+            sl = tp1 = tp2 = tp3 = 0
+            sl_pips = tp1_pips = tp2_pips = tp3_pips = 0
+            risk_amount = profit_tp1 = 0
+            order_type = "SKIP"
 
         return {
             'pair': pair_name,
             'status': 'SETUP',
             'direction': direction,
             'order_type': order_type,
-            'entry': entry_price,
+            'entry': entry_price if score >= 5 else current_price,
             'price': current_price,
             'range': f"{opening_low:.5f} - {opening_high:.5f}",
             'score': score,
@@ -436,6 +584,13 @@ def analyze_pair(df, pair_name):
             'tp1': tp1,
             'tp2': tp2,
             'tp3': tp3,
+            'sl_pips': sl_pips,
+            'tp1_pips': tp1_pips,
+            'tp2_pips': tp2_pips,
+            'tp3_pips': tp3_pips,
+            'lot_size': lot_size,
+            'risk_amount': risk_amount,
+            'profit_tp1': profit_tp1,
             'factors': factors
         }
 
@@ -452,14 +607,9 @@ def main():
     create_log_dir()
     initialize_csv()
 
-    print("🚀 ORB Analyzer - UPDATED VERSION")
+    print("🚀 ORB Analyzer - UPDATED WITH DYNAMIC LOT & PIP-BASED SL/TP")
     print(f"📊 Pairs: {', '.join(PAIRS)}")
     print(f"⏱️  Check every {CHECK_INTERVAL}s")
-    #print(f"🔢 Runs: {MAX_ITERATIONS} times then stop")
-   # print(f"✅ Scoring: 0-8 points")
-    #print(f"🔐 API Key: From GitHub Secrets (Secure)")
-    #print(f"📊 SL: Fixed 30 pips")
-    #print(f"📝 Logging to: {LOG_FILE}")
 
     iteration = 0
 
@@ -495,35 +645,52 @@ def main():
                     BOLD = "\033[1m"
                     RESET = "\033[0m"
                     BIG = "\033[1;37m"  # bright white for emphasis
+                    
                     # Bold + emphasized order_type
                     print(f"├─ Recommendation: {BOLD}{BIG}{result['order_type']}{RESET}")
                     
+                    # Lot size
+                    print(f"├─ Lot Size:")
+                    print(f"   {result['lot_size']:.2f}")
+                    
                     print(f"├─ Entry:")
-                    print(f"{result['entry']:.4f}")
-                    print(f"├─ SL:")
-                    print(f"{result['sl']:.4f}")
-                    print(f"├─ TP1:")
-                    print(f"{result['tp1']:.4f}")
-                """
-                if result['factors']:
-                    print(f"\nAll 8 Factors:")
-                    for k in sorted(result['factors'].keys()):
-                        print(f"   {result['factors'][k]}")
-                """
-                # LOG THE TRADE
-                factors_str = " | ".join([f"{k}:{v}" for k, v in sorted(result['factors'].items())])
-                log_result(
-                    result['pair'],
-                    result['direction'],
-                    result['score'],
-                    result['order_type'],
-                    result['entry'],
-                    result['sl'],
-                    result['tp1'],
-                    result['tp2'],
-                    result['tp3'],
-                    factors_str
-                )
+                    print(f"   {result['entry']:.4f}")
+                    
+                    # NEW FORMAT FOR SL/TP
+                    print(f"├─ SL: ({result['sl_pips']:.1f} pips, ${result['risk_amount']:.0f} risk)")
+                    print(f"   {result['sl']:.4f}")
+                    
+                    print(f"├─ TP1: ({result['tp1_pips']:.1f} pips, ${result['profit_tp1']:.0f} profit)")
+                    print(f"   {result['tp1']:.4f}")
+                    
+                    print(f"├─ TP2: ({result['tp2_pips']:.1f} pips, ${result['profit_tp1']*2:.0f} profit)")
+                    print(f"   {result['tp2']:.4f}")
+                    
+                    print(f"└─ TP3: ({result['tp3_pips']:.1f} pips, ${result['profit_tp1']*3:.0f} profit)")
+                    print(f"   {result['tp3']:.4f}")
+
+                    
+                    # LOG THE TRADE
+                    factors_str = " | ".join([f"{k}:{v}" for k, v in sorted(result['factors'].items())])
+                    log_result(
+                        result['pair'],
+                        result['direction'],
+                        result['score'],
+                        result['order_type'],
+                        result['entry'],
+                        result['sl'],
+                        result['tp1'],
+                        result['tp2'],
+                        result['tp3'],
+                        result['sl_pips'],
+                        result['tp1_pips'],
+                        result['tp2_pips'],
+                        result['tp3_pips'],
+                        result['lot_size'],
+                        result['risk_amount'],
+                        result['profit_tp1'],
+                        factors_str
+                    )
 
             time.sleep(1)
 
@@ -544,5 +711,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-    
-   
