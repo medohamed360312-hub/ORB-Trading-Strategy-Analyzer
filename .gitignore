@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Google Drive credentials (IMPORTANT!)
+credentials.json
+credentials_base64.txt
+token.pickle
+
+# Logs
+*.log
+trading_logs/*.csv
