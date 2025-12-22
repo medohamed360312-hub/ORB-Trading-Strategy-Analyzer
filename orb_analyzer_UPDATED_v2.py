@@ -23,7 +23,7 @@ import os
 # ════════════════════════════════════════════════════════════════════════════════════
 # CONFIGURATION
 # ════════════════════════════════════════════════════════════════════════════════════
-
+os.environ['USE_GOOGLE_DRIVE'] = 'true'
 # Read API key from GitHub Secrets environment variable
 API_KEY = os.getenv('TWELVEDATA_API_KEY', 'ALPHA')
 BASE_URL = "https://api.twelvedata.com"
@@ -378,24 +378,26 @@ def calculate_sl_tp(entry_price, direction, pair_type, lot_size, score):
     
     return sl, tp1, tp2, tp3, sl_pips, tp1_pips, tp2_pips, tp3_pips
 
+
 def log_result_with_gdrive(pair, direction, score, order_type, entry, sl, tp1, tp2, tp3,
-                           sl_pips, tp1_pips, tp2_pips, tp3_pips, lot_size, risk_amount, 
+                           sl_pips, tp1_pips, tp2_pips, tp3_pips, lot_size, risk_amount,
                            profit_tp1, factors_str, upload_to_gdrive=False, drive_filename=None):
     """
-    Log trade result to CSV file with Google Drive upload capability
+    Log trade result to BOTH local CSV and Google Drive CSV simultaneously
     NEW ENTRIES APPEAR AT TOP (after header)
+    Both CSVs stay in sync!
     """
     try:
         today = datetime.now().strftime("%Y-%m-%d")
         timestamp = datetime.now().strftime("%H:%M:%S")
-        
+
         # Calculate actual profit amounts at each TP
         pair_type = get_pair_type(pair)
         pip_value = get_pip_value(pair_type)
-        
+
         profit_tp1_amount = round(tp1_pips * pip_value * lot_size, 2)
         profit_tp2_amount = round(tp2_pips * pip_value * lot_size, 2)
-        
+
         # Risk/Reward ratio
         rr_ratio = round(profit_tp1_amount / risk_amount, 2) if risk_amount > 0 else 0
 
@@ -423,42 +425,78 @@ def log_result_with_gdrive(pair, direction, score, order_type, entry, sl, tp1, t
             'RiskReward_Ratio': [f"1:{rr_ratio:.2f}"],
             'Factors': [factors_str]
         }
-        
+
         new_row_df = pd.DataFrame(new_row_data)
-        
-        # Read existing CSV
+
+        # ════════════════════════════════════════════════════════════════════════
+        # 1. UPDATE LOCAL CSV (newest first)
+        # ════════════════════════════════════════════════════════════════════════
+
+        # Read existing local CSV
         if os.path.exists(LOG_FILE):
             existing_df = pd.read_csv(LOG_FILE)
         else:
             existing_df = pd.DataFrame()
-        
-        # ✅ PREPEND NEW ROW (new entries at TOP, after header)
+
+        # PREPEND NEW ROW (new entries at TOP, after header)
         if not existing_df.empty:
             combined_df = pd.concat([new_row_df, existing_df], ignore_index=True)
         else:
             combined_df = new_row_df
-        
+
         # Write back to local file
         combined_df.to_csv(LOG_FILE, index=False)
-        print(f"   ✅ Logged to CSV (newest first): {LOG_FILE}")
-        
-        # Upload to Google Drive if enabled
+        print(f"   ✅ Local CSV updated: {LOG_FILE}")
+
+        # ════════════════════════════════════════════════════════════════════════
+        # 2. UPDATE GOOGLE DRIVE CSV (if enabled)
+        # ════════════════════════════════════════════════════════════════════════
+
         if upload_to_gdrive and drive_filename:
             try:
                 from google_drive_manager import GoogleDriveManager
+
                 drive_manager = GoogleDriveManager()
-                drive_manager.upload_csv(LOG_FILE, drive_filename)
-                print(f"   ✅ Uploaded to Google Drive: {drive_filename}")
+
+                # Download current Google Drive CSV
+                gdrive_csv_path = f"temp_{drive_filename}"
+                try:
+                    drive_manager.download_csv(drive_filename, gdrive_csv_path)
+                    gdrive_df = pd.read_csv(gdrive_csv_path)
+                except:
+                    # If file doesn't exist on Drive yet, create new
+                    gdrive_df = pd.DataFrame()
+
+                # PREPEND NEW ROW to Google Drive CSV (same as local)
+                if not gdrive_df.empty:
+                    gdrive_combined = pd.concat([new_row_df, gdrive_df], ignore_index=True)
+                else:
+                    gdrive_combined = new_row_df
+
+                # Save to temp file
+                gdrive_combined.to_csv(gdrive_csv_path, index=False)
+
+                # Upload to Google Drive
+                drive_manager.upload_csv(gdrive_csv_path, drive_filename)
+
+                # Clean up temp file
+                if os.path.exists(gdrive_csv_path):
+                    os.remove(gdrive_csv_path)
+
+                print(f"   ✅ Google Drive CSV updated: {drive_filename}")
+
             except ImportError:
-                print(f"   ⚠️  Google Drive module not installed. Skipping upload.")
+                print(f"   ⚠️  Google Drive module not installed. Only local CSV updated.")
             except Exception as e:
-                print(f"   ⚠️  Could not upload to Google Drive: {str(e)[:50]}")
-        
+                print(f"   ⚠️  Google Drive error: {str(e)[:50]}")
+                print(f"      (Local CSV still updated successfully)")
+
         return True
 
     except Exception as e:
         print(f"   ⚠️  Logging error: {str(e)[:40]}")
         return False
+
 
 # ════════════════════════════════════════════════════════════════════════════════════
 # ANALYSIS - ALL 8 FACTORS
