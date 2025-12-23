@@ -51,30 +51,68 @@ PIP_VALUES = {
 }
 
 # ════════════════════════════════════════════════════════════════════════════════════
-# LOT SIZE AND RISK/REWARD CONFIGURATION
+# LOT SIZE AND RISK/REWARD CONFIGURATION (UPDATED)
 # ════════════════════════════════════════════════════════════════════════════════════
 
+# Score-based lot sizing (scales from 5/8 to 8/8)
 LOT_SIZES = {
-    "standard": {5: 0.15, 6: 0.25},  # Score 5/8 → 0.15, Score 6/8 → 0.25
-    "jpy": {5: 0.15, 6: 0.25},
-    "gold": {5: 0.75, 6: 1.25}       # Gold: 5x higher for same $ targets
-}
-
-# Risk/Reward targets by pair type
-RISK_REWARD = {
-    "standard": {
-        5: {"risk": 20, "profit_tp1": 10},
-        6: {"risk": 20, "profit_tp1": 20}
+    "standard": {  # Forex pairs
+        5: 0.01,   # 5/8 = Safe
+        6: 0.02,   # 6/8 = Standard
+        7: 0.03,   # 7/8 = Aggressive
+        8: 0.04    # 8/8 = Risky
     },
-    "jpy": {
-        5: {"risk": 20, "profit_tp1": 10},
-        6: {"risk": 20, "profit_tp1": 20}
+    "jpy": {       # JPY pairs
+        5: 0.01,
+        6: 0.02,
+        7: 0.03,
+        8: 0.04
     },
-    "gold": {
-        5: {"risk": 50, "profit_tp1": 50},
-        6: {"risk": 50, "profit_tp1": 70}
+    "gold": {      # Gold (XAU/USD)
+        5: 0.01,   # 5/8 = Safe
+        6: 0.02,   # 6/8 = Standard
+        7: 0.03,   # 7/8 = Aggressive
+        8: 0.04    # 8/8 = Risky
     }
 }
+
+# Risk/Reward targets by pair type and score
+RISK_REWARD = {
+    "standard": {  # Forex: TP $10/$20/$30, SL $50
+        5: {"risk": 50, "profit_tp1": 10, "profit_tp2": 20, "profit_tp3": 30},
+        6: {"risk": 50, "profit_tp1": 10, "profit_tp2": 20, "profit_tp3": 30},
+        7: {"risk": 50, "profit_tp1": 10, "profit_tp2": 20, "profit_tp3": 30},
+        8: {"risk": 50, "profit_tp1": 10, "profit_tp2": 20, "profit_tp3": 30}
+    },
+    "jpy": {       # JPY pairs: same as standard
+        5: {"risk": 50, "profit_tp1": 10, "profit_tp2": 20, "profit_tp3": 30},
+        6: {"risk": 50, "profit_tp1": 10, "profit_tp2": 20, "profit_tp3": 30},
+        7: {"risk": 50, "profit_tp1": 10, "profit_tp2": 20, "profit_tp3": 30},
+        8: {"risk": 50, "profit_tp1": 10, "profit_tp2": 20, "profit_tp3": 30}
+    },
+    "gold": {      # Gold: TP $50/$100/$150, SL $200
+        5: {"risk": 200, "profit_tp1": 50, "profit_tp2": 100, "profit_tp3": 150},
+        6: {"risk": 200, "profit_tp1": 50, "profit_tp2": 100, "profit_tp3": 150},
+        7: {"risk": 200, "profit_tp1": 50, "profit_tp2": 100, "profit_tp3": 150},
+        8: {"risk": 200, "profit_tp1": 50, "profit_tp2": 100, "profit_tp3": 150}
+    }
+}
+
+# Update the get_lot_size function to handle scores 5-8
+def get_lot_size(pair_type, score):
+    """Get lot size based on pair type and score (5-8)"""
+    if score >= 5:
+        return LOT_SIZES.get(pair_type, {}).get(score, 0.01)
+    else:
+        return 0.0  # No trade below score 5
+
+# Update the get_risk_reward function to handle scores 5-8
+def get_risk_reward(pair_type, score):
+    """Get risk/reward targets based on pair type and score"""
+    if score >= 5:
+        return RISK_REWARD.get(pair_type, {}).get(score, {"risk": 50, "profit_tp1": 10})
+    else:
+        return {"risk": 0, "profit_tp1": 0, "profit_tp2": 0, "profit_tp3": 0}
 
 TIMEFRAME = "5min"
 CHECK_INTERVAL = 300  # 5 minutes
@@ -341,28 +379,24 @@ def calculate_sl_tp(entry_price, direction, pair_type, lot_size, score):
     # Get pip value and risk/reward targets
     pip_value = get_pip_value(pair_type)
     risk_reward = get_risk_reward(pair_type, score)
-    
     risk_amount = risk_reward["risk"]
     profit_tp1 = risk_reward["profit_tp1"]
+    profit_tp2 = risk_reward.get("profit_tp2", profit_tp1 * 2)
+    profit_tp3 = risk_reward.get("profit_tp3", profit_tp1 * 3)
     
-    # Calculate pips needed for risk
+    # Calculate pips needed for risk and TPs
     sl_pips = round(risk_amount / (pip_value * lot_size), 1)
-    
-    # Calculate pips for TP levels
     tp1_pips = round(profit_tp1 / (pip_value * lot_size), 1)
-    tp2_pips = round((profit_tp1 * 2) / (pip_value * lot_size), 1)
-    tp3_pips = round((profit_tp1 * 3) / (pip_value * lot_size), 1)
+    tp2_pips = round(profit_tp2 / (pip_value * lot_size), 1)
+    tp3_pips = round(profit_tp3 / (pip_value * lot_size), 1)
     
-    # Convert pips to price levels based on pair type
+    # Convert pips to price levels
     if pair_type == "gold":
-        # Gold: 1 pip = 0.01 move
+        pip_multiplier = 0.01
+    elif pair_type == "jpy":
         pip_multiplier = 0.01
     else:
-        # Standard and JPY: check if JPY or standard
-        if pair_type == "jpy":
-            pip_multiplier = 0.01
-        else:
-            pip_multiplier = 0.0001
+        pip_multiplier = 0.0001
     
     # Calculate SL and TP prices
     if direction == "LONG":
@@ -377,6 +411,7 @@ def calculate_sl_tp(entry_price, direction, pair_type, lot_size, score):
         tp3 = round(entry_price - (tp3_pips * pip_multiplier), 4)
     
     return sl, tp1, tp2, tp3, sl_pips, tp1_pips, tp2_pips, tp3_pips
+
 
 
 def log_result_with_gdrive(pair, direction, score, order_type, entry, sl, tp1, tp2, tp3,
