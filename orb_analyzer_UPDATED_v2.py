@@ -6,7 +6,7 @@ All 8 factors: Breakout, RSI, MACD, EMA, Momentum, Volume, FVG, Support/Resistan
 API Key from GitHub Secrets (Secure)
 
 UPDATED WITH:
-- Score-based dynamic lot sizing
+- Score-based dynamic lot sizing (5-8)
 - Pair-type-specific risk/reward targets (Standard vs Gold)
 - Pip-based SL/TP calculations
 - Enhanced CSV logging with Risk($), Reward($), R/R Ratio, Pips
@@ -98,22 +98,6 @@ RISK_REWARD = {
     }
 }
 
-# Update the get_lot_size function to handle scores 5-8
-def get_lot_size(pair_type, score):
-    """Get lot size based on pair type and score (5-8)"""
-    if score >= 5:
-        return LOT_SIZES.get(pair_type, {}).get(score, 0.01)
-    else:
-        return 0.0  # No trade below score 5
-
-# Update the get_risk_reward function to handle scores 5-8
-def get_risk_reward(pair_type, score):
-    """Get risk/reward targets based on pair type and score"""
-    if score >= 5:
-        return RISK_REWARD.get(pair_type, {}).get(score, {"risk": 50, "profit_tp1": 10})
-    else:
-        return {"risk": 0, "profit_tp1": 0, "profit_tp2": 0, "profit_tp3": 0}
-
 TIMEFRAME = "5min"
 CHECK_INTERVAL = 300  # 5 minutes
 MAX_ITERATIONS = 1  # Stop after 1 check
@@ -169,24 +153,37 @@ def get_pip_value(pair_type):
 
 
 def get_lot_size(pair_type, score):
-    """Get lot size based on pair type and score"""
-    # Score can be 0-8, we check if score >= 5 or >= 6
-    if score >= 6:
-        return LOT_SIZES.get(pair_type, {}).get(6, 0.15)
-    elif score >= 5:
-        return LOT_SIZES.get(pair_type, {}).get(5, 0.15)
+    """Get lot size based on pair type and score (5-8)
+    
+    Score 5 = 0.01 (Safe)
+    Score 6 = 0.02 (Standard)
+    Score 7 = 0.03 (Aggressive)
+    Score 8 = 0.04 (Risky)
+    """
+    if score >= 5:
+        # Use exact score, fallback to 0.01 if not found
+        return LOT_SIZES.get(pair_type, {}).get(score, 0.01)
     else:
-        return 0.0  # No trade
+        return 0.0  # No trade below score 5
 
 
 def get_risk_reward(pair_type, score):
-    """Get risk/reward targets based on pair type and score"""
-    if score >= 6:
-        return RISK_REWARD.get(pair_type, {}).get(6, {"risk": 20, "profit_tp1": 20})
-    elif score >= 5:
-        return RISK_REWARD.get(pair_type, {}).get(5, {"risk": 20, "profit_tp1": 10})
+    """Get risk/reward targets based on pair type and score (5-8)"""
+    if score >= 5:
+        # Use exact score, fallback to safe values if not found
+        return RISK_REWARD.get(pair_type, {}).get(score, {
+            "risk": 50,
+            "profit_tp1": 10,
+            "profit_tp2": 20,
+            "profit_tp3": 30
+        })
     else:
-        return {"risk": 0, "profit_tp1": 0}
+        return {
+            "risk": 0,
+            "profit_tp1": 0,
+            "profit_tp2": 0,
+            "profit_tp3": 0
+        }
 
 
 def get_twelvedata_candles(pair, api_key, interval="5min", count=50):
@@ -413,10 +410,9 @@ def calculate_sl_tp(entry_price, direction, pair_type, lot_size, score):
     return sl, tp1, tp2, tp3, sl_pips, tp1_pips, tp2_pips, tp3_pips
 
 
-
 def log_result_with_gdrive(pair, direction, score, order_type, entry, sl, tp1, tp2, tp3,
                            sl_pips, tp1_pips, tp2_pips, tp3_pips, lot_size, risk_amount,
-                           profit_tp1, factors_str, upload_to_gdrive=False, drive_filename=None):
+                           profit_tp1, profit_tp2, factors_str, upload_to_gdrive=False, drive_filename=None):
     """
     Log trade result to BOTH local CSV and Google Drive CSV simultaneously
     NEW ENTRIES APPEAR AT TOP (after header)
@@ -657,20 +653,22 @@ def analyze_pair(df, pair_name):
             risk_reward = get_risk_reward(pair_type, score)
             risk_amount = risk_reward["risk"]
             profit_tp1 = risk_reward["profit_tp1"]
+            profit_tp2 = risk_reward.get("profit_tp2", profit_tp1 * 2)
             
             order_type = "Buy Limit" if direction == "LONG" else "Sell Limit"
         else:
             sl = tp1 = tp2 = tp3 = 0
             sl_pips = tp1_pips = tp2_pips = tp3_pips = 0
-            risk_amount = profit_tp1 = 0
+            risk_amount = profit_tp1 = profit_tp2 = 0
             order_type = "SKIP"
+            entry_price = current_price
 
         return {
             'pair': pair_name,
             'status': 'SETUP',
             'direction': direction,
             'order_type': order_type,
-            'entry': entry_price if score >= 5 else current_price,
+            'entry': entry_price,
             'price': current_price,
             'range': f"{opening_low:.5f} - {opening_high:.5f}",
             'score': score,
@@ -687,6 +685,7 @@ def analyze_pair(df, pair_name):
             'lot_size': lot_size,
             'risk_amount': risk_amount,
             'profit_tp1': profit_tp1,
+            'profit_tp2': profit_tp2,
             'factors': factors
         }
 
@@ -741,7 +740,7 @@ def main():
                 print(f"   ❌ {result['message']}")
             elif result['status'] == 'SETUP':
                 if result['recommendation'] == "SKIP":
-                    print(" ⏭️ Recommendation: SKIP")
+                    print("   ⏭️ Recommendation: SKIP")
                 else:
                     print(f"Score: {result['score']}/{result['max_score']} → {result['recommendation']}")
                     # ANSI escape codes for formatting
@@ -766,7 +765,7 @@ def main():
                     print(f"├─ TP1: ({result['tp1_pips']:.1f} pips, ${result['profit_tp1']:.0f} profit)")
                     print(f"   {result['tp1']:.4f}")
                     
-                    print(f"├─ TP2: ({result['tp2_pips']:.1f} pips, ${result['profit_tp1']*2:.0f} profit)")
+                    print(f"├─ TP2: ({result['tp2_pips']:.1f} pips, ${result['profit_tp2']:.0f} profit)")
                     print(f"   {result['tp2']:.4f}")
                     
                     print(f"└─ TP3: ({result['tp3_pips']:.1f} pips, ${result['profit_tp1']*3:.0f} profit)")
@@ -792,6 +791,7 @@ def main():
                         result['lot_size'],
                         result['risk_amount'],
                         result['profit_tp1'],
+                        result['profit_tp2'],
                         factors_str,
                         upload_to_gdrive=USE_GDRIVE,
                         drive_filename=GDRIVE_FILENAME
