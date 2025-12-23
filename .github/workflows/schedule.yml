@@ -2,54 +2,155 @@ name: Run ORB Analyzer Scheduled
 
 on:
   workflow_dispatch:
+  schedule:
+    # Run every day at 9:00 AM UTC (adjust timezone as needed)
+    - cron: '0 9 * * *'
   repository_dispatch:
-    types: [workflow_dispatch]
-  
+    types: [workflow_trigger]
 
 jobs:
-  run:
+  run_orb_analyzer:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    
     steps:
-      - uses: actions/checkout@v3
-      
-      - uses: actions/setup-python@v4
+      # ════════════════════════════════════════════════════════════════
+      # 1. CHECKOUT CODE
+      # ════════════════════════════════════════════════════════════════
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      # ════════════════════════════════════════════════════════════════
+      # 2. SETUP PYTHON
+      # ════════════════════════════════════════════════════════════════
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v4
         with:
           python-version: '3.10'
-      
-      - run: pip install -r requirements.txt
-      - run: pip install -r requirements_gdrive.txt
-      
-      - run: mkdir -p trading_logs
-      
-      # CRITICAL: Set up Google Drive credentials for GitHub Actions
-      - name: Setup Google Drive Credentials
+          cache: 'pip'
+
+      # ════════════════════════════════════════════════════════════════
+      # 3. INSTALL DEPENDENCIES
+      # ════════════════════════════════════════════════════════════════
+      - name: Install dependencies
         run: |
-          echo "${{ secrets.GOOGLE_DRIVE_CREDENTIALS }}" | base64 --decode > credentials.json
-        continue-on-error: true
-      
-      # Run the trading bot
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -r requirements_gdrive.txt
+
+      # ════════════════════════════════════════════════════════════════
+      # 4. CREATE DIRECTORIES
+      # ════════════════════════════════════════════════════════════════
+      - name: Create required directories
+        run: |
+          mkdir -p trading_logs
+          echo "✅ Created trading_logs directory"
+
+      # ════════════════════════════════════════════════════════════════
+      # 5. SETUP GOOGLE DRIVE CREDENTIALS (SERVICE ACCOUNT)
+      # ════════════════════════════════════════════════════════════════
+      - name: Setup Google Drive Service Account Credentials
+        run: |
+          if [ -z "${{ secrets.GOOGLE_DRIVE_CREDENTIALS }}" ]; then
+            echo "⚠️  GOOGLE_DRIVE_CREDENTIALS not set. Google Drive upload will be disabled."
+            echo "USE_GOOGLE_DRIVE=false" >> $GITHUB_ENV
+          else
+            echo "${{ secrets.GOOGLE_DRIVE_CREDENTIALS }}" | base64 --decode > service_account.json
+            if [ -f "service_account.json" ]; then
+              echo "✅ Service account credentials loaded successfully"
+              echo "USE_GOOGLE_DRIVE=true" >> $GITHUB_ENV
+            else
+              echo "❌ Failed to create service_account.json"
+              echo "USE_GOOGLE_DRIVE=false" >> $GITHUB_ENV
+            fi
+          fi
+
+      # ════════════════════════════════════════════════════════════════
+      # 6. RUN ORB ANALYZER
+      # ════════════════════════════════════════════════════════════════
       - name: Run ORB Analyzer
-        run: python orb_analyzer_UPDATED_v2.py
+        run: |
+          echo "🚀 Starting ORB Analyzer..."
+          python orb_analyzer_UPDATED_v2.py
         env:
           TWELVEDATA_API_KEY: ${{ secrets.TWELVEDATA_API_KEY }}
-          USE_GOOGLE_DRIVE: ${{ secrets.USE_GOOGLE_DRIVE || 'false' }}
+          USE_GOOGLE_DRIVE: ${{ env.USE_GOOGLE_DRIVE }}
           GDRIVE_CSV_FILENAME: ${{ secrets.GDRIVE_CSV_FILENAME || 'orb_trading_log.csv' }}
-        continue-on-error: true
-      
-      # Upload logs as artifact
-      - uses: actions/upload-artifact@v4
-        with:
-          name: trading_logs
-          path: trading_logs/
-          retention-days: 30
+          GOOGLE_DRIVE_CREDENTIALS: ${{ secrets.GOOGLE_DRIVE_CREDENTIALS }}
         continue-on-error: true
 
-      # Commit logs to repository (backup)
-      - name: Commit logs to repository
+      # ════════════════════════════════════════════════════════════════
+      # 7. UPLOAD LOGS AS ARTIFACT
+      # ════════════════════════════════════════════════════════════════
+      - name: Upload trading logs as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: trading_logs_${{ github.run_number }}
+          path: trading_logs/
+          retention-days: 30
+        if: always()
+        continue-on-error: true
+
+      # ════════════════════════════════════════════════════════════════
+      # 8. COMMIT LOGS TO REPOSITORY (BACKUP)
+      # ════════════════════════════════════════════════════════════════
+      - name: Commit and push trading logs to repository
         run: |
           git config --local user.email "action@github.com"
-          git config --local user.name "GitHub Action"
-          git add trading_logs/
-          git commit -m "Auto: Update trading logs - $(date)" || echo "No changes to commit"
-          git push https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git
+          git config --local user.name "GitHub ORB Analyzer Bot"
+          
+          # Check if there are changes
+          if git status trading_logs/ | grep -q "modified\|new file"; then
+            git add trading_logs/
+            git commit -m "🤖 Auto: Update trading logs - $(date '+%Y-%m-%d %H:%M:%S UTC')"
+            git push https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git
+            echo "✅ Logs committed and pushed to repository"
+          else
+            echo "ℹ️  No changes in trading logs"
+          fi
         continue-on-error: true
+
+      # ════════════════════════════════════════════════════════════════
+      # 9. SEND NOTIFICATION (Optional - requires Discord webhook)
+      # ════════════════════════════════════════════════════════════════
+      - name: Send Discord notification (optional)
+        if: always()
+        run: |
+          if [ "${{ job.status }}" == "success" ]; then
+            STATUS="✅ SUCCESS"
+            COLOR="65280"
+          else
+            STATUS="⚠️ COMPLETED WITH ERRORS"
+            COLOR="16776960"
+          fi
+          
+          if [ -n "${{ secrets.DISCORD_WEBHOOK_URL }}" ]; then
+            curl -X POST "${{ secrets.DISCORD_WEBHOOK_URL }}" \
+              -H "Content-Type: application/json" \
+              -d "{
+                \"embeds\": [{
+                  \"title\": \"$STATUS - ORB Analyzer Run\",
+                  \"color\": $COLOR,
+                  \"fields\": [
+                    {\"name\": \"Repository\", \"value\": \"${{ github.repository }}\", \"inline\": true},
+                    {\"name\": \"Run Number\", \"value\": \"${{ github.run_number }}\", \"inline\": true},
+                    {\"name\": \"Branch\", \"value\": \"${{ github.ref }}\", \"inline\": true},
+                    {\"name\": \"Time\", \"value\": \"$(date -u '+%Y-%m-%d %H:%M:%S UTC')\", \"inline\": true}
+                  ],
+                  \"url\": \"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"
+                }]
+              }"
+          fi
+        continue-on-error: true
+
+      # ════════════════════════════════════════════════════════════════
+      # 10. CLEANUP
+      # ════════════════════════════════════════════════════════════════
+      - name: Cleanup sensitive files
+        if: always()
+        run: |
+          rm -f service_account.json
+          rm -f credentials.json
+          echo "✅ Cleanup complete"
