@@ -107,6 +107,29 @@ LOG_DIR = "trading_logs"
 LOG_FILE = f"{LOG_DIR}/orb_trading_log.csv"
 
 # ════════════════════════════════════════════════════════════════════════════════════
+# GOOGLE SHEETS CONFIGURATION (NEW - SHEETS ONLY)
+# ════════════════════════════════════════════════════════════════════════════════════
+
+GOOGLE_SHEETS_ENABLED = os.getenv('USE_GOOGLE_SHEETS', 'false').lower() == 'true'
+GDRIVE_SHEET_NAME = os.getenv('GDRIVE_SHEET_NAME', 'ORB Trading Log')
+GDRIVE_SHEET_ID = os.getenv('GDRIVE_SHEET_ID', None)
+
+# Column headers for Google Sheets (11 columns)
+SHEET_HEADERS = [
+    'Date',
+    'Time',
+    'Pair',
+    'Direction',
+    'Score',
+    'Recommendation',
+    'Entry',
+    'SL',
+    'TP1',
+    'TP2',
+    'TP3'
+]
+
+# ════════════════════════════════════════════════════════════════════════════════════
 # CREATE LOG DIRECTORY AND INITIALIZE CSV
 # ════════════════════════════════════════════════════════════════════════════════════
 
@@ -692,6 +715,68 @@ def analyze_pair(df, pair_name):
     except Exception as e:
         return {'pair': pair_name, 'status': 'ERROR', 'message': str(e)[:40]}
 
+def setup_google_sheet():
+    """Create or get Google Sheet (run once at startup)"""
+    if not GOOGLE_SHEETS_ENABLED:
+        return None
+
+    try:
+        from google_drive_manager import GoogleDriveManager
+        manager = GoogleDriveManager()
+
+        # Create or get sheet
+        sheet_id = manager.create_or_get_sheet(GDRIVE_SHEET_NAME)
+        if not sheet_id:
+            print("❌ Failed to create/get Google Sheet")
+            return None
+
+        # Upload headers
+        manager.upload_headers(sheet_id, SHEET_HEADERS)
+        print(f"✅ Google Sheet ready! Add to GitHub secret:")
+        print(f"   GDRIVE_SHEET_ID={sheet_id}")
+
+        return sheet_id
+
+    except ImportError:
+        print("❌ Google Drive module not installed")
+        return None
+    except Exception as e:
+        print(f"❌ Setup failed: {str(e)[:80]}")
+        return None
+
+def log_to_sheets(pair, direction, score, recommendation, entry, sl, tp1, tp2, tp3, sheet_id):
+    """Simple: Append one row to Google Sheet"""
+    if not sheet_id or not GOOGLE_SHEETS_ENABLED:
+        return
+
+    try:
+        from google_drive_manager import GoogleDriveManager
+
+        today = datetime.now().strftime("%Y-%m-%d")
+        timestamp = datetime.now().strftime("%H:%M:%S")
+
+        # Prepare row (11 columns)
+        row_data = [
+            today,
+            timestamp,
+            pair,
+            direction,
+            score,
+            recommendation,
+            f'{entry:.4f}',
+            f'{sl:.4f}',
+            f'{tp1:.4f}',
+            f'{tp2:.4f}',
+            f'{tp3:.4f}'
+        ]
+
+        # Append to sheet
+        manager = GoogleDriveManager()
+        if manager.append_row(sheet_id, row_data):
+            print(f"✅ Google Sheets updated")
+
+    except Exception as e:
+        print(f"⚠️ Sheet error: {str(e)[:80]}")
 
 # ════════════════════════════════════════════════════════════════════════════════════
 # MAIN
@@ -701,6 +786,8 @@ def main():
     # CREATE LOG DIR AND CSV FIRST
     create_log_dir()
     initialize_csv()
+    # Setup Google Sheet if enabled
+    sheet_id = setup_google_sheet()
         
     # Get Google Drive settings from environment variables
     USE_GDRIVE = os.getenv('USE_GOOGLE_DRIVE', 'false').lower() == 'true'
@@ -774,27 +861,17 @@ def main():
                     
                     # LOG THE TRADE
                     factors_str = " | ".join([f"{k}:{v}" for k, v in sorted(result['factors'].items())])
-                    log_result_with_gdrive(
+                    log_to_sheets(
                         result['pair'],
                         result['direction'],
                         result['score'],
-                        result['order_type'],
+                        result['order_type'],           # ← KEY FIX!
                         result['entry'],
                         result['sl'],
                         result['tp1'],
                         result['tp2'],
                         result['tp3'],
-                        result['sl_pips'],
-                        result['tp1_pips'],
-                        result['tp2_pips'],
-                        result['tp3_pips'],
-                        result['lot_size'],
-                        result['risk_amount'],
-                        result['profit_tp1'],
-                        result['profit_tp2'],
-                        factors_str,
-                        upload_to_gdrive=USE_GDRIVE,
-                        drive_filename=GDRIVE_FILENAME
+                        sheet_id
                     )
 
             time.sleep(1)
