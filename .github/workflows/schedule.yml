@@ -73,8 +73,9 @@ jobs:
           python orb_analyzer_UPDATED_v2.py
         env:
           TWELVEDATA_API_KEY: ${{ secrets.TWELVEDATA_API_KEY }}
-          USE_GOOGLE_DRIVE: ${{ env.USE_GOOGLE_DRIVE }}
-          GDRIVE_CSV_FILENAME: ${{ secrets.GDRIVE_CSV_FILENAME || 'orb_trading_log.csv' }}
+          USE_GOOGLE_SHEETS: 'true'
+          GDRIVE_SHEET_NAME: 'ORB Trading Log'
+          GDRIVE_SHEET_ID: ${{ secrets.GDRIVE_SHEET_ID }}
           GOOGLE_DRIVE_CREDENTIALS: ${{ secrets.GOOGLE_DRIVE_CREDENTIALS }}
         continue-on-error: true
 
