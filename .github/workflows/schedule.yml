@@ -2,12 +2,9 @@ name: Run ORB Analyzer Scheduled
 
 on:
   workflow_dispatch:
-  schedule:
-    # Run every day at 9:00 AM UTC (adjust timezone as needed)
-    - cron: '0 9 * * *'
   repository_dispatch:
     types: [workflow_trigger]
-
+    
 jobs:
   run_orb_analyzer:
     runs-on: ubuntu-latest
