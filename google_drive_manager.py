@@ -3,18 +3,21 @@ import base64
 import os
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
-from googleapiclient.http import MediaFileUpload
 
-# FIXED: Changed from "drive.file" (restricted) to "drive" (full access)
-SCOPES = ["https://www.googleapis.com/auth/drive"]
+# SCOPES for Google Sheets API
+SCOPES = [
+    "https://www.googleapis.com/auth/drive",
+    "https://www.googleapis.com/auth/spreadsheets"
+]
 
 class GoogleDriveManager:
     def __init__(self):
-        self.service = None
+        self.sheets_service = None
+        self.drive_service = None
         self.authenticate()
 
     def authenticate(self):
-        """Use Service Account instead of OAuth2.0 flow"""
+        """Authenticate with Google APIs"""
         try:
             creds = None
 
@@ -34,96 +37,112 @@ class GoogleDriveManager:
                 )
 
             else:
-                print("❌ No credentials found. Set GOOGLE_DRIVE_CREDENTIALS env var or add service_account.json")
+                print("❌ No credentials found")
                 return False
 
-            self.service = build("drive", "v3", credentials=creds)
-            print("✅ Authenticated with Google Drive (Service Account) - FULL ACCESS")
+            self.drive_service = build("drive", "v3", credentials=creds)
+            self.sheets_service = build("sheets", "v4", credentials=creds)
+            print("✅ Authenticated with Google Drive & Sheets API")
             return True
 
         except Exception as e:
-            print(f"❌ GDrive auth failed: {str(e)[:100]}")
+            print(f"❌ Auth failed: {str(e)[:100]}")
             return False
 
-    def upload_csv(self, local_file_path, drive_file_name, folder_id=None):
-        """Upload or update a CSV file on Google Drive."""
+    def create_or_get_sheet(self, sheet_name):
+        """Create Google Sheet or get existing one by name"""
         try:
-            if not self.service:
-                print("❌ Not authenticated with Google Drive.")
-                return False
+            if not self.drive_service:
+                print("❌ Not authenticated")
+                return None
 
-            # Search for file
-            query = f"name='{drive_file_name}' and trashed=false"
-            if folder_id:
-                query += f" and parents='{folder_id}'"
-
-            results = self.service.files().list(
+            # Search for existing sheet
+            query = f"name='{sheet_name}' and mimeType='application/vnd.google-apps.spreadsheet' and trashed=false"
+            results = self.drive_service.files().list(
                 q=query,
                 spaces="drive",
                 fields="files(id)",
                 pageSize=1
             ).execute()
 
-            file_id = results["files"][0]["id"] if results.get("files") else None
+            # If exists, return ID
+            if results.get("files"):
+                sheet_id = results["files"][0]["id"]
+                print(f"✅ Found existing Google Sheet: {sheet_name}")
+                return sheet_id
 
-            file_metadata = {"name": drive_file_name}
-            media = MediaFileUpload(local_file_path, mimetype="text/csv", resumable=True)
+            # If not, create new
+            file_metadata = {
+                "name": sheet_name,
+                "mimeType": "application/vnd.google-apps.spreadsheet"
+            }
 
-            if file_id:
-                # Update existing file
-                self.service.files().update(
-                    fileId=file_id,
-                    body=file_metadata,
-                    media_body=media,
-                    fields="id"
-                ).execute()
-                print(f"✅ GDrive upload successful (UPDATED): {drive_file_name}")
-            else:
-                # Create new file
-                body = {"name": drive_file_name}
-                if folder_id:
-                    body["parents"] = [folder_id]
-
-                self.service.files().create(
-                    body=body,
-                    media_body=media,
-                    fields="id"
-                ).execute()
-                print(f"✅ GDrive upload successful (CREATED): {drive_file_name}")
-
-            return True
-
-        except Exception as e:
-            print(f"❌ GDrive upload failed: {str(e)[:100]}")
-            return False
-
-    def download_csv(self, drive_file_name, local_file_path):
-        """Download CSV from Google Drive."""
-        try:
-            if not self.service:
-                print("❌ Not authenticated with Google Drive.")
-                return False
-
-            results = self.service.files().list(
-                q=f"name='{drive_file_name}' and trashed=false",
-                spaces="drive",
-                fields="files(id)",
-                pageSize=1
+            file = self.drive_service.files().create(
+                body=file_metadata,
+                fields="id"
             ).execute()
 
-            if not results.get("files"):
-                print(f"❌ GDrive file not found: {drive_file_name}")
+            sheet_id = file.get("id")
+            print(f"✅ Created new Google Sheet: {sheet_name}")
+            return sheet_id
+
+        except Exception as e:
+            print(f"❌ Sheet creation failed: {str(e)[:100]}")
+            return None
+
+    def upload_headers(self, spreadsheet_id, headers):
+        """Upload header row to Google Sheet"""
+        try:
+            if not self.sheets_service:
                 return False
 
-            file_id = results["files"][0]["id"]
-            request = self.service.files().get_media(fileId=file_id)
+            body = {"values": [headers]}
+            self.sheets_service.spreadsheets().values().update(
+                spreadsheetId=spreadsheet_id,
+                range="Sheet1!A1",
+                valueInputOption="USER_ENTERED",
+                body=body
+            ).execute()
 
-            with open(local_file_path, "wb") as f:
-                f.write(request.execute())
-
-            print(f"✅ GDrive download successful: {drive_file_name}")
+            print(f"✅ Headers uploaded to Google Sheet")
             return True
 
         except Exception as e:
-            print(f"❌ GDrive download failed: {str(e)[:100]}")
+            print(f"❌ Header upload failed: {str(e)[:100]}")
             return False
+
+    def append_row(self, spreadsheet_id, row_data):
+        """Append a single row to Google Sheet"""
+        try:
+            if not self.sheets_service:
+                return False
+
+            body = {"values": [row_data]}
+            self.sheets_service.spreadsheets().values().append(
+                spreadsheetId=spreadsheet_id,
+                range="Sheet1!A:A",
+                valueInputOption="USER_ENTERED",
+                body=body
+            ).execute()
+
+            return True
+
+        except Exception as e:
+            print(f"❌ Row append failed: {str(e)[:100]}")
+            return False
+
+    def get_sheet_url(self, spreadsheet_id):
+        """Get the URL of the Google Sheet"""
+        try:
+            if not self.sheets_service:
+                return None
+
+            sheet = self.sheets_service.spreadsheets().get(
+                spreadsheetId=spreadsheet_id,
+                fields="spreadsheetUrl"
+            ).execute()
+            return sheet.get("spreadsheetUrl")
+
+        except Exception as e:
+            print(f"❌ Failed to get URL: {str(e)[:100]}")
+            return None
