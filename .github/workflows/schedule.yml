@@ -3,7 +3,7 @@ name: Run ORB Analyzer Scheduled
 on:
   workflow_dispatch:
   repository_dispatch:
-    types: [workflow_dispatch]
+    types: [workflow_trigger]
     
 jobs:
   run_orb_analyzer:
