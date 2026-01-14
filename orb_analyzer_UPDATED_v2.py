@@ -29,9 +29,9 @@ API_KEY = os.getenv('TWELVEDATA_API_KEY', 'ALPHA')
 BASE_URL = "https://api.twelvedata.com"
 
 # Trading pairs and their characteristics
-#PAIRS = ["EUR/USD", "GBP/USD", "USD/JPY", "USD/CAD", "EUR/GBP", "XAU/USD", "USD/CHF", "AUD/USD"]
+PAIRS = ["EUR/USD", "GBP/USD", "USD/JPY", "USD/CAD", "EUR/GBP", "XAU/USD", "USD/CHF", "AUD/USD"]
 
-PAIRS = ["EUR/USD", "GBP/USD", "USD/JPY", "USD/CAD", "EUR/GBP", "XAU/USD", "XAG/USD", "AUD/USD"]
+#PAIRS = ["EUR/USD", "GBP/USD", "USD/JPY", "USD/CAD", "EUR/GBP", "XAU/USD", "XAG/USD", "AUD/USD"]
 
 # Pair type mapping
 PAIR_TYPES = {
@@ -41,8 +41,8 @@ PAIR_TYPES = {
     "USD/CAD": "standard",
     "EUR/GBP": "standard",
      "XAU/USD": "gold",
-    "XAG/USD": "gold",
-   # "USD/CHF": "standard",
+    #"XAG/USD": "gold",
+    "USD/CHF": "standard",
     "AUD/USD": "standard"
 }
 
